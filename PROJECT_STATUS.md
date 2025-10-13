@@ -1,8 +1,8 @@
 # PersonaLab 项目当前状态
 
 **最后更新**: 2025-10-13
-**当前版本**: v0.1.0 (前端待生成)
-**状态**: 🟡 筹备中
+**当前版本**: v0.1.0 (技术设计完成)
+**状态**: 🟡 设计阶段
 
 > 📌 **重要**：这是项目的"活文档"，记录**当前真实状态**，而非某个发布版本。
 > 版本发布时，会归档快照到 `docs/archive/v{版本号}/`
@@ -27,12 +27,15 @@ PersonaLab（人格实验室）是一个 **AI 角色对话平台**。
 - **框架**: Next.js 14 (App Router)
 - **语言**: TypeScript
 - **UI 库**: Shadcn/ui + Tailwind CSS
-- **状态管理**: Zustand + localStorage 持久化
+- **状态管理**: Zustand（前端临时状态）
 - **通信**: Socket.IO Client (WebSocket) + Fetch API (REST)
 
 **后端**：
-- 用户将自行进行颠覆性改造
-- 前端需预留好后端接口对接
+- **语言**: Python 3.11+
+- **框架**: FastAPI（REST API + WebSocket）
+- **LLM**: LangChain + OpenAI/Claude API
+- **向量库**: Chroma（本地部署）
+- **存储**: 文件系统（JSON/JSONL）
 
 ---
 
@@ -42,16 +45,37 @@ PersonaLab（人格实验室）是一个 **AI 角色对话平台**。
 
 ```
 personalab/
-├── src/                      # 前端源代码（待生成）
-│   ├── app/                 # Next.js 页面
-│   ├── components/          # UI 组件
-│   ├── lib/                 # 工具库
-│   └── types/               # TypeScript 类型
+├── frontend/                 # 前端（待生成）
+│   ├── src/                 # 前端源代码
+│   │   ├── app/            # Next.js 页面
+│   │   ├── components/     # UI 组件
+│   │   ├── lib/            # 工具库
+│   │   └── types/          # TypeScript 类型
+│   └── package.json
 │
-├── tests/                    # 测试
+├── backend/                  # 后端（待生成）
+│   ├── app/                 # FastAPI 应用
+│   │   ├── main.py         # 入口
+│   │   ├── models/         # 数据模型
+│   │   ├── core/           # 核心业务逻辑
+│   │   ├── api/            # REST API
+│   │   ├── websocket/      # WebSocket
+│   │   └── storage/        # 数据存储层
+│   └── requirements.txt
+│
+├── data/                     # 数据目录（运行时生成）
+│   ├── characters/          # 角色库
+│   ├── backgrounds/         # 背景库
+│   ├── sessions/            # 会话文件
+│   ├── event_library/       # 全局事件库（向量数据库）
+│   └── prompt_templates/    # Prompt模板
+│
 ├── docs/                     # 文档
+│   ├── DESIGN.md            # 技术设计文档 ✅
+│   ├── QUESTIONS.md         # 待解决问题清单 ✅
 │   ├── archive/             # 版本归档
 │   └── reports/             # 过程报告
+│
 ├── temp/                     # 临时文件
 │   ├── reports/
 │   └── tests/
@@ -155,6 +179,24 @@ src/
 
 ## 📝 最近调整记录
 
+### 2025-10-13 - 完成核心技术设计 ✅
+
+**调整内容**:
+1. 明确系统总目标：解决LLM长对话中的上下文稀释和指令遗忘问题
+2. 设计核心数据结构：
+   - dynamic_profile.json（条目化累加、优先级策略、无量化）
+   - event_log（全局共享、完全脱离角色）
+   - 会话文件（一个会话一个.jsonl文件）
+3. 确定核心机制：
+   - 状态更新：只在"意外"时更新，不是表面情绪表达
+   - 事件归档：归档后对话不进Prompt，改由RAG检索
+   - 人格成长：通过"主观预期 vs 客观结果"的差异驱动
+4. 设计Prompt工程：模块化、可配置、优先级分层
+5. 明确技术栈：后端 Python + FastAPI + LangChain + Chroma
+6. 生成文档：
+   - docs/DESIGN.md（完整技术设计）
+   - docs/QUESTIONS.md（20个待解决问题）
+
 ### 2025-10-13 - 项目初始化 ✅
 
 **调整内容**:
@@ -184,13 +226,30 @@ src/
 
 ## 📋 待办事项
 
-### 高优先级（前端生成）
-- [ ] 创建前端配置文件（package.json, tsconfig.json, tailwind.config.ts 等）
-- [ ] 生成 TypeScript 类型定义
-- [ ] 生成 API 客户端封装
-- [ ] 生成 WebSocket 管理
-- [ ] 生成 Zustand 状态管理
-- [ ] 生成 Shadcn UI 基础组件
+### 高优先级（设计阶段）
+- [x] 完成核心技术设计（DESIGN.md）
+- [x] 整理待解决问题（QUESTIONS.md）
+- [ ] 解决高优先级设计问题（4个）
+- [ ] 确定数据结构细节
+- [ ] 设计后端API接口规范
+
+### 高优先级（后端实现）
+- [ ] 搭建FastAPI项目结构
+- [ ] 实现数据模型（Pydantic）
+- [ ] 实现ProfileManager（状态管理）
+- [ ] 实现EventManager（RAG + Chroma）
+- [ ] 实现PromptEngine（Prompt组装）
+- [ ] 实现LLMService（LangChain集成）
+- [ ] 实现InteractionLoop（核心流程）
+- [ ] 实现REST API
+- [ ] 实现WebSocket
+
+### 高优先级（前端实现）
+- [ ] 创建Next.js项目结构
+- [ ] 生成TypeScript类型定义
+- [ ] 生成API客户端封装
+- [ ] 生成WebSocket管理
+- [ ] 生成Shadcn UI基础组件
 - [ ] 生成布局组件
 - [ ] 生成对话功能组件
 - [ ] 生成角色管理组件
@@ -198,13 +257,15 @@ src/
 - [ ] 生成页面路由
 
 ### 中优先级
-- [ ] 实现前端独立运行（使用假数据/本地状态）
-- [ ] 优化暗色主题样式
+- [ ] Prompt模板前端管理功能
+- [ ] 会话导出功能
+- [ ] 角色状态展示
 - [ ] 添加加载状态和错误处理
-- [ ] 实现会话导出功能
 - [ ] 响应式布局优化
 
 ### 低优先级
+- [ ] 定时维护任务（去重/降级）
+- [ ] 事件库规模控制
 - [ ] 编写组件文档
 - [ ] 添加单元测试
 - [ ] 性能优化
