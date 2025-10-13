@@ -40,3 +40,6 @@ temp/
 # Package manager
 package-lock.json
 yarn.lock
+
+# User configuration (privacy data)
+.user-config.json
