@@ -15,7 +15,8 @@
       "Bash(findstr:*)",
       "Bash(git -c http.proxy=http://127.0.0.1:8765 -c https.proxy=http://127.0.0.1:8765 push)",
       "Bash(mkdir:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(cp:*)"
     ],
     "deny": [],
     "ask": []
