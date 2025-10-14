@@ -1,8 +1,8 @@
 # PersonaLab 技术设计文档
 
-**文档版本**: v0.2.0
+**文档版本**: v0.2.1
 **创建日期**: 2025-10-13
-**最后更新**: 2025-10-14
+**最后更新**: 2025-10-14 (需求澄清后更新)
 
 ---
 
@@ -12,7 +12,7 @@
 2. [核心概念](#核心概念)
 3. [架构设计](#架构设计)
 4. [数据结构设计](#数据结构设计)
-5. [人格三层机制](#人格三层机制)
+5. [记忆管理架构](#记忆管理架构)
 6. [核心交互流程](#核心交互流程)
 7. [Prompt工程](#prompt工程)
 8. [事件库与RAG](#事件库与rag)
@@ -33,48 +33,48 @@
 
 ### 解决方案
 
-通过**故事线隔离 + 三层人格 + RAG增强记忆**：
-- 故事线（Storyline）- 独立的故事世界，状态隔离
-- 三层人格机制 - 静态核心 + 慢动态成长 + 快动态状态
-- 事件库（Event Library）- 向量检索历史事件
-- 结构化Prompt工程 - 强制LLM始终关注核心状态
+通过**会话实例隔离 + 动态人格管理 + RAG增强记忆**：
+- 会话实例（Conversation Instance）- 独立的状态隔离容器
+- Core Memory 动态管理 - 初始人格 + 成长人格，定期更新
+- 事件库（Archival Memory）- 向量检索历史事件
+- 结构化Prompt工程 - 将人格状态固定在 Prompt 头部
 
 ---
 
 ## 核心概念
 
-### 故事线（Storyline）
+### 会话实例（Conversation Instance）
 
-**定义**：一条独立的、连续的故事世界。
+**定义**：一个独立的、状态隔离的对话容器。
 
 **特点**：
-- 用户创建故事线时，选择角色和背景
-- 故事线内可以有多个会话（暂停/继续）
-- 角色状态属于故事线，不属于全局
-- 不同故事线完全隔离，互不影响
+- 用户创建会话实例时，选择角色和背景
+- 实例内可以有多个会话（暂停/继续）
+- 角色状态属于实例，不属于全局
+- 不同实例完全隔离，互不影响
 
 **类比**：
 ```
 角色：Alserqi
 
-故事线A："盟友之路"
+实例A："盟友之路"
   - 会话1：初次见面
-  - 会话2：建立信任（继续故事线A）
-  - 会话3：共同战斗（继续故事线A）
+  - 会话2：建立信任（继续实例A）
+  - 会话3：共同战斗（继续实例A）
   → 角色状态：与用户是盟友
 
-故事线B："敌对之路"（独立故事）
+实例B："敌对之路"（独立实例）
   - 会话4：敌对相遇
-  - 会话5：冲突升级（继续故事线B）
+  - 会话5：冲突升级（继续实例B）
   → 角色状态：与用户是敌人
 
-两条故事线的角色状态完全独立，互不干扰
+两个实例的角色状态完全独立，互不干扰
 ```
 
 ### 人格成长的逻辑闭环
 
 ```
-1. 角色当前状态（三层人格）
+1. 角色当前状态（base_persona + evolved_persona + 最近对话记忆）
    ↓
 2. 事件触发（用户输入/剧情推进）
    ↓
@@ -84,9 +84,9 @@
    ↓
 5. 主观预期 vs 客观结果 → 产生差异
    ↓
-6. 差异触发状态变化（情绪、认知、关系改变）
+6. 差异积累到一定程度，触发 evolved_persona 更新
    ↓
-7. 新状态 → 影响下一次事件的反应方式
+7. 新的 evolved_persona → 影响后续所有对话的反应方式
    ↓
 （循环）
 ```
@@ -112,18 +112,18 @@ data/
 ├── backgrounds/                         # 背景库（全局）
 │   └── {background_id}.json             # 背景定义
 │
-├── storylines/                          # 故事线（核心）
-│   └── {storyline_id}/
-│       ├── metadata.json                # 故事线元数据
-│       ├── character_state.json         # 故事线的角色状态
+├── instances/                           # 会话实例（核心）
+│   └── {instance_id}/
+│       ├── metadata.json                # 实例元数据
+│       ├── character_state.json         # 实例的角色状态
 │       └── sessions/
 │           ├── sess_001.jsonl           # 会话1
-│           ├── sess_002.jsonl           # 会话2（继续故事）
-│           └── sess_003.jsonl           # 会话3（继续故事）
+│           ├── sess_002.jsonl           # 会话2（继续对话）
+│           └── sess_003.jsonl           # 会话3（继续对话）
 │
 ├── event_library/                       # 全局事件库
 │   └── chroma_db/                       # 向量数据库
-│       # 存储所有事件，带storyline_id和session_id过滤标记
+│       # 存储所有事件，带instance_id和session_id过滤标记
 │
 └── prompt_templates/                    # Prompt模板
     └── default_v1.json
@@ -135,11 +135,11 @@ data/
 角色定义（全局唯一）
   └── character_id: "alserqi_v1"
 
-故事线（独立世界）
-  └── storyline_id: "story_001"
+会话实例（独立隔离容器）
+  └── instance_id: "inst_001"
       ├── character_id: "alserqi_v1"     ← 引用角色
       ├── background_id: "wasteland"     ← 引用背景
-      ├── character_state.json           ← 状态属于故事线
+      ├── character_state.json           ← 状态属于实例
       └── sessions/
           ├── sess_001.jsonl
           │   └── session_id: "sess_001"
@@ -147,8 +147,8 @@ data/
               └── session_id: "sess_002"
 
 事件库（全局，但带标记）
-  └── event_id: "evt_story001_sess001_030"
-      ├── storyline_id: "story_001"      ← 必须！用于过滤
+  └── event_id: "evt_inst001_sess001_030"
+      ├── instance_id: "inst_001"        ← 必须！用于过滤
       ├── session_id: "sess_001"         ← 必须！用于追溯
       └── turn: 30                       ← 会话内第几轮
 ```
@@ -171,24 +171,7 @@ data/
   "name": "Alserqi",
   "description": "一个寻仇者，曾经的精英战士，因背叛而堕入复仇之路",
   "avatar": "alserqi_avatar.png",
-  "initial_profile": {
-    "core_identity": {
-      "archetype": "Vengeful Anti-hero",
-      "core_goal": "Destroy the 'Core'",
-      "core_traits": ["Cynical", "Pragmatic", "Loyal_to_few"],
-      "background_story": "曾是组织的精英战士，因发现真相被背叛"
-    },
-    "growth_state": {
-      "beliefs": [],
-      "behavioral_patterns": [],
-      "relationships": []
-    },
-    "current_state": {
-      "emotions": ["Neutral"],
-      "physical": "健康",
-      "immediate_goals": []
-    }
-  }
+  "base_persona": "我是 Alserqi，一个寻仇者。曾经是组织的精英战士，因发现真相被背叛，堕入复仇之路。性格冷酷、务实，对背叛者绝不原谅，但对少数人仍保有忠诚。我的核心目标是摧毁背叛我的'核心'组织。"
 }
 ```
 
@@ -214,17 +197,17 @@ data/
 
 ---
 
-### 3. 故事线元数据（Storyline Metadata）
+### 3. 会话实例元数据（Instance Metadata）
 
-**存储位置**：`storylines/{storyline_id}/metadata.json`
+**存储位置**：`instances/{instance_id}/metadata.json`
 
-**用途**：记录故事线的基本信息
+**用途**：记录会话实例的基本信息
 
 **结构示例**：
 
 ```json
 {
-  "storyline_id": "story_001",
+  "instance_id": "inst_001",
   "title": "盟友之路",
   "character_id": "alserqi_v1",
   "background_id": "wasteland_world",
@@ -251,88 +234,36 @@ data/
 
 ### 4. 角色状态（Character State）
 
-**存储位置**：`storylines/{storyline_id}/character_state.json`
+**存储位置**：`instances/{instance_id}/character_state.json`
 
-**用途**：存储角色在当前故事线的状态
+**用途**：存储角色在当前会话实例的状态（采用 Core Memory 动态管理机制）
 
-**结构示例**（详见"人格三层机制"章节）：
+**结构示例**：
 
 ```json
 {
-  "storyline_id": "story_001",
+  "instance_id": "inst_001",
   "character_id": "alserqi_v1",
   "last_updated_turn": 250,
   "last_maintenance_turn": 240,
 
-  "core_identity": {
-    "archetype": "Vengeful Anti-hero",
-    "core_goal": "Destroy the 'Core'",
-    "core_traits": ["Cynical", "Pragmatic", "Loyal_to_few"],
-    "background_story": "曾是组织的精英战士，因发现真相被背叛"
-  },
+  "base_persona": "我是 Alserqi，一个寻仇者。曾经是组织的精英战士，因发现真相被背叛，堕入复仇之路。性格冷酷、务实，对背叛者绝不原谅，但对少数人仍保有忠诚。我的核心目标是摧毁背叛我的'核心'组织。",
 
-  "growth_state": {
-    "beliefs": [
-      {
-        "content": "Trust must be earned through actions, not words",
-        "formed_from": "多次被背叛的经历",
-        "timestamp": "2025-10-12T18:00:00Z"
-      }
-    ],
-    "behavioral_patterns": [
-      {
-        "pattern": "Always verify information before acting",
-        "timestamp": "2025-10-12T19:00:00Z"
-      }
-    ],
-    "relationships": [
-      {
-        "entity": "user",
-        "status": "Trusted_Companion",
-        "history": "经历了考验、背叛、解释、原谅的完整循环",
-        "timestamp": "2025-10-13T10:00:00Z"
-      }
-    ]
-  },
-
-  "current_state": {
-    "emotions": [
-      {
-        "content": "Weary",
-        "context": "长时间的战斗和逃亡",
-        "timestamp": "2025-10-13T10:00:00Z"
-      },
-      {
-        "content": "Cautious_Hope",
-        "context": "与user的合作进展顺利",
-        "timestamp": "2025-10-13T09:00:00Z"
-      }
-    ],
-    "physical": {
-      "condition": "Exhausted, left arm injured",
-      "timestamp": "2025-10-13T09:00:00Z"
-    },
-    "immediate_goals": [
-      {
-        "goal": "Find safe shelter",
-        "reason": "Need to rest and treat wounds",
-        "timestamp": "2025-10-13T10:00:00Z"
-      },
-      {
-        "goal": "Contact B for intel",
-        "reason": "Need information about Core's movements",
-        "timestamp": "2025-10-13T09:30:00Z"
-      }
-    ]
-  }
+  "evolved_persona": "经历了与用户的并肩作战，我开始意识到信任并非完全不可能。虽然仍保持警惕，但对用户产生了复杂的情感——既有战友情谊，也有对其判断力的认可。经历多次背叛后，我学会了在愤怒中保持理性，不再盲目冲动。左臂在最近的战斗中受伤，这让我更加谨慎。当前目标是找到安全屋休整，同时联系线人B获取'核心'的最新动向。"
 }
 ```
+
+**关键说明**：
+- `base_persona`：角色的初始人格，永不改变
+- `evolved_persona`：角色的成长人格，每 30 轮或手动触发时更新
+- 短期状态（情绪、伤势、目标）直接融入 `evolved_persona` 的自然描述中
+- 不再使用三层结构（core_identity/growth_state/current_state）
 
 ---
 
 ### 5. 会话消息（Session Messages）
 
-**存储位置**：`storylines/{storyline_id}/sessions/{session_id}.jsonl`
+**存储位置**：`instances/{instance_id}/sessions/{session_id}.jsonl`
 
 **用途**：记录完整对话历史
 
@@ -343,7 +274,7 @@ data/
 **示例**：
 
 ```jsonl
-{"type": "metadata", "session_id": "sess_001", "storyline_id": "story_001", "started_at": "2025-10-01T10:00:00Z"}
+{"type": "metadata", "session_id": "sess_001", "instance_id": "inst_001", "started_at": "2025-10-01T10:00:00Z"}
 {"role": "user", "content": "你这个骗子！", "turn": 1, "timestamp": "2025-10-01T10:00:05Z"}
 {"role": "assistant", "content": "Alserqi听了你的话，眼中闪过一丝轻蔑...", "turn": 1, "timestamp": "2025-10-01T10:00:20Z"}
 {"role": "user", "content": "我有证据", "turn": 2, "timestamp": "2025-10-01T10:01:00Z"}
@@ -361,175 +292,240 @@ data/
 
 **存储位置**：`data/event_library/chroma_db/`（向量数据库）
 
-**用途**：存储重要事件，用于RAG检索
+**用途**：存储重要事件摘要，用于RAG检索
 
 **结构示例**：
 
 ```json
 {
-  "event_id": "evt_story001_sess001_030",
-  "storyline_id": "story_001",
+  "event_id": "evt_inst001_sess001_030",
+  "instance_id": "inst_001",
   "session_id": "sess_001",
   "turn": 30,
-  "summary": "用户展示证据，Alserqi从怀疑转为信任",
-  "full_context": "用户：'我有证据' → Alserqi看到文件，瞳孔微缩... → 关系改变",
-  "state_changes": {
-    "relationships": "Stranger → Potential_Ally"
-  },
+  "summary": "用户展示证据，Alserqi从怀疑转为信任。关系从陌生人变为潜在盟友。",
   "timestamp": "2025-10-01T10:30:00Z",
   "embedding": [0.1, 0.2, 0.3, ...]
 }
 ```
 
 **关键字段**：
-- `storyline_id` - **必须**，用于RAG检索时过滤，避免不同故事线的事件混淆
+- `instance_id` - **必须**，用于RAG检索时过滤，避免不同实例的事件混淆
 - `session_id` - **必须**，用于追溯和调试
 - `turn` - 会话内的第几轮，用于精确定位
+- `summary` - 事件摘要，由 LLM 在人格维护时生成（每 30 轮）
 - 不需要 `previous_event`（不使用链表结构，纯RAG）
 
 ---
 
-## 人格三层机制
+## 记忆管理架构
 
-### 核心原理
+### 三层记忆架构（借鉴 Letta/MemGPT）
 
-**三层的本质**：不是"分几个字段"，而是**数据的变化速度不同**。
+PersonaLab 采用三层记忆架构，类似于 Letta/MemGPT 的设计：
 
 ```
-第1层：静态（永不变化）
-  ↓
-第2层：慢动态（重大事件才变化）
-  ↓
-第3层：快动态（频繁变化）
+PersonaLab 记忆架构
+├─ Core Memory（角色人格状态）
+│   - 存储位置：character_state.json
+│   - 加载位置：Prompt 头部 4K 区域
+│   - 更新机制：【待设计】
+│
+├─ Archival Memory（长期事件库）
+│   - 存储位置：Chroma 向量数据库
+│   - 访问方式：RAG 语义检索
+│   - 写入时机：状态变化时异步写入
+│
+└─ Recall Memory（最近对话历史）
+    - 存储位置：会话文件（.jsonl）+ 内存滑动窗口缓存
+    - 加载位置：Prompt 中间 4K-32K 区域
+    - 维护机制：滑动窗口（BASE_RECALL_SIZE + CLEANUP_THRESHOLD）
 ```
 
-### 实现方式
+### Recall Memory 维护机制（已确定）
+
+**核心设计**：滑动窗口策略
+
+```python
+# 配置参数
+BASE_RECALL_SIZE = 20        # 基础保留轮数（可配置）
+CLEANUP_THRESHOLD = 10       # 清理阈值（可配置）
+
+# 运行时缓存
+class RecallMemoryCache:
+    """滑动窗口缓存，维护最近 BASE_RECALL_SIZE + CLEANUP_THRESHOLD 轮对话"""
+
+    def __init__(self, base_size=20, threshold=10):
+        self.base_size = base_size
+        self.threshold = threshold
+        self.max_size = base_size + threshold  # 30轮
+        self.messages = []  # 滑动窗口
+
+    def append(self, message):
+        """添加新消息，超过最大容量时自动清理"""
+        self.messages.append(message)
+
+        # 如果超过最大容量（30轮 = 60条消息，user+assistant）
+        if len(self.messages) > self.max_size * 2:
+            # 删除最早的 threshold 轮（10轮 = 20条消息）
+            self.messages = self.messages[self.threshold * 2:]
+
+    def get_for_prompt(self):
+        """获取用于 Prompt 的消息"""
+        return self.messages
+```
+
+**维护流程**：
+
+```
+第1轮：  缓存中有 1轮  （第1轮）
+第20轮： 缓存中有 20轮 （第1-20轮） ← 达到基础容量
+第30轮： 缓存中有 30轮 （第1-30轮） ← 达到最大容量
+第31轮： 缓存中有 21轮 （第11-31轮）← 自动清理了前10轮
+第40轮： 缓存中有 30轮 （第11-40轮）← 再次达到最大容量
+第41轮： 缓存中有 21轮 （第21-41轮）← 再次清理前10轮
+...循环往复
+```
+
+**关键点**：
+- 会话文件（.jsonl）永久保留所有对话，不物理删除
+- 内存缓存维护滑动窗口，自动清理旧消息
+- 组装 Prompt 时直接从缓存读取，O(1) 性能
+- 服务重启时从文件重建缓存（只需读最近 30 轮）
+
+---
+
+## Core Memory 动态管理机制
+
+### 设计方案
+
+PersonaLab 不使用 Letta 的 AI Agent 自管理机制（function calling），而是采用**系统定期更新**的方式。
+
+### 核心概念
+
+**Core Memory 组成**：
+```
+Core Memory = 初始人格（base_persona）+ 成长人格（evolved_persona）
+```
+
+- **初始人格（base_persona）**：角色的底色，永不改变
+- **成长人格（evolved_persona）**：随着对话经历而变化，定期更新
+
+**展示给 AI 的完整人格**：
+```
+完整人格 = 初始人格 + 成长人格 + 当前对话历史
+```
+
+### 数据结构
 
 ```json
 {
-  // 第1层：静态核心（永不变化）
-  "core_identity": {
-    "archetype": "Vengeful Anti-hero",
-    "core_goal": "Destroy the 'Core'",
-    "core_traits": ["Cynical", "Pragmatic", "Loyal_to_few"],
-    "background_story": "..."
-  },
+  "base_persona": "我是一个复仇者，曾经是警察，因冤案入狱。性格冷酷、执着，对背叛者绝不原谅。",
 
-  // 第2层：慢动态（成长层）
-  "growth_state": {
-    "beliefs": [...],           // 形成的深层信念
-    "behavioral_patterns": [...],// 行为模式
-    "relationships": [...]       // 关系深度
-  },
-
-  // 第3层：快动态（状态层）
-  "current_state": {
-    "emotions": [...],           // 当前情绪
-    "physical": {...},           // 身体状况
-    "immediate_goals": [...]     // 短期目标
-  }
+  "evolved_persona": "经历了与用户的相处，开始意识到世界并非非黑即白。对用户产生了复杂的情感，既有警惕也有信任。学会了在愤怒中保持理性。"
 }
 ```
 
-### 设计原则
+### 更新机制
 
-**❌ 绝对禁止量化**：
-- 不使用 `priority`, `intensity`, `level` 等数字
-- 不使用 `每N轮-1` 的降级机制
-- 不使用数字阈值判断删除
+#### 触发时机
 
-**✅ 纯定性描述**：
-- 所有内容都是文本描述
-- 用 `timestamp` 记录时间
-- 用定期维护任务清理过时数据
+1. **定期触发**：Recall Memory 清理缓存时同步执行
+   - 当 Recall Memory 达到清理阈值（30 轮）
+   - 在第 31、41、51... 轮追加消息时触发
+   - 调用 1 次 LLM 更新 `evolved_persona`
 
-### 变化机制
+2. **手动触发**：用户点击"🧠 更新人格"按钮
+   - 立即调用 LLM 更新 `evolved_persona`
+   - 不等待定期触发时机
 
-```python
-# 第1层：永不变化
-# core_identity 从 definition.json 复制后，不再修改
-
-# 第2层：重大事件才变化
-if is_major_event(state_update):  # 如：关系质变、核心信念动摇
-    growth_state["beliefs"].append({
-        "content": "新信念",
-        "formed_from": "事件描述",
-        "timestamp": now()
-    })
-
-# 第3层：每次交互可能变化
-current_state["emotions"].append({
-    "content": "Betrayed",
-    "context": "用户承认一直在欺骗",
-    "timestamp": now()
-})
-```
-
-### 定期维护任务
-
-**触发条件**：每10轮对话执行一次
-
-**操作内容**：
+#### 实现架构
 
 ```python
-def cleanup_character_state(state, current_turn):
-    """
-    定期维护：清理、去重、整理动态状态
-    """
-    # 1. 快动态层：清理过多数据
-    # emotions只保留最新的5个
-    if len(state["current_state"]["emotions"]) > 5:
-        state["current_state"]["emotions"] = \
-            state["current_state"]["emotions"][-5:]
+class RecallMemoryCache:
+    """Recall Memory 缓存管理"""
 
-    # immediate_goals只保留最新的3个
-    if len(state["current_state"]["immediate_goals"]) > 3:
-        state["current_state"]["immediate_goals"] = \
-            state["current_state"]["immediate_goals"][-3:]
+    def cleanup(self):
+        """清理缓存（删除最早的 threshold 轮）"""
+        self.messages = self.messages[self.threshold * 2:]
 
-    # 2. 慢动态层：去重、合并
-    # 去重beliefs（相同内容合并）
-    beliefs_dict = {}
-    for belief in state["growth_state"]["beliefs"]:
-        content = belief["content"]
-        if content not in beliefs_dict:
-            beliefs_dict[content] = belief
-        else:
-            # 保留最新的timestamp
-            if belief["timestamp"] > beliefs_dict[content]["timestamp"]:
-                beliefs_dict[content] = belief
-    state["growth_state"]["beliefs"] = list(beliefs_dict.values())
 
-    # 3. 合并同一实体的关系（保留最新）
-    relationships_dict = {}
-    for rel in state["growth_state"]["relationships"]:
-        entity = rel["entity"]
-        if entity not in relationships_dict:
-            relationships_dict[entity] = rel
-        else:
-            if rel["timestamp"] > relationships_dict[entity]["timestamp"]:
-                relationships_dict[entity] = rel
-    state["growth_state"]["relationships"] = list(relationships_dict.values())
+class EvolvedPersonaUpdater:
+    """成长人格更新器"""
 
-    # 4. 更新维护轮次
-    state["last_maintenance_turn"] = current_turn
+    async def update(self, recent_conversations):
+        """更新 evolved_persona"""
+        # 调用 LLM，生成新的成长人格描述
+        # 保存到 character_state.json
+
+
+class MaintenanceScheduler:
+    """定期维护任务调度器"""
+
+    def check_and_execute(self):
+        """检查并执行维护任务"""
+        if self.recall_cache.needs_cleanup():
+            # 任务1：清理 Recall Memory 缓存
+            self.recall_cache.cleanup()
+
+            # 任务2：更新成长人格
+            asyncio.create_task(self.persona_updater.update(...))
 ```
 
-**关键**：
-- 不是"衰减"，是"清理过多累积"
-- 不使用数字降级，而是控制数量上限
-- 慢动态层去重、合并
-- 快动态层只保留最新N个
+### 更新流程
+
+```
+第 31 轮消息追加：
+  ↓
+MaintenanceScheduler 检测到需要清理
+  ↓
+并行执行两个任务：
+  ├─ 任务1：RecallMemoryCache.cleanup()
+  │         删除最早的 10 轮对话
+  │
+  └─ 任务2：EvolvedPersonaUpdater.update()
+            ├─ 输入：base_persona + evolved_persona + 最近对话
+            ├─ LLM 生成新的 evolved_persona
+            └─ 保存到 character_state.json
+  ↓
+第 31 轮对话继续处理（不阻塞）
+```
+
+### Prompt 组装
+
+```
+---CHARACTER_PERSONA---
+## Base Identity (Immutable Core) ##
+{base_persona}
+
+## Evolved State (Growth Through Experience) ##
+{evolved_persona}
+
+## Recent Context ##
+{最近 20-30 轮对话}
+---
+
+注意：Base Identity 是角色的本质底色，永不改变。
+Evolved State 是角色经历成长后的状态。
+请综合考虑两者和当前对话上下文来生成角色的反应。
+```
+
+### 关键特点
+
+1. **简单明了**：只有两个字段，逻辑清晰
+2. **成本可控**：每 30 轮调用 1 次 LLM（与 Recall Memory 清理同步）
+3. **不依赖 AI 判断**：系统定期触发，不需要 AI 每轮判断是否更新
+4. **用户可控**：提供手动触发按钮，用户可随时更新
+5. **异步执行**：更新任务不阻塞对话流程
 
 ---
 
 ## 核心交互流程
 
-### 一次完整交互（性能优化版）
+### 一次完整交互（整合版）
 
 **性能目标**：
 - 总耗时：< 30秒
-- 非LLM耗时：< 12秒（实际约2秒）
+- 非LLM耗时：< 2秒
 - LLM耗时：15-20秒
 
 **流程**：
@@ -537,47 +533,66 @@ def cleanup_character_state(state, current_turn):
 ```
 用户输入："你还记得我说的话吗？"
   ↓
-[1] 追加消息到会话文件 (~50ms)
-  append_to_file("storylines/story_001/sessions/sess_002.jsonl", user_message)
+[1] 追加消息到会话文件 + 缓存 (~50ms)
+  append_to_file("instances/{instance_id}/sessions/{session_id}.jsonl", user_message)
+  recall_cache.append(user_message)
   ↓
-[2] 并行执行（总耗时取最慢的）
+[2] 并行加载数据（总耗时取最慢的）
   await asyncio.gather(
-    read_recent_messages(storyline_id, n=20),         # ~100ms
-    rag_query_with_timeout(user_input, storyline_id), # ~500-1500ms
-    load_character_state(storyline_id),               # ~50ms
+    rag_query_with_timeout(user_input, instance_id),  # ~500-1500ms
+    load_character_state(instance_id),                # ~50ms (包含 base_persona + evolved_persona)
     load_background(background_id)                    # ~50ms
   )
-  并行耗时：max(100, 1500, 50, 50) = ~1500ms
+  recent_messages = recall_cache.get_for_prompt()     # ~0ms (从内存缓存读取)
+  并行耗时：max(1500, 50, 50) = ~1500ms
   ↓
 [3] 组装Prompt (~100ms)
-  prompt = build_prompt(state, background, rag_events, recent_msgs, user_input)
+  prompt = build_prompt(
+    base_persona=state['base_persona'],
+    evolved_persona=state['evolved_persona'],
+    background=background,
+    rag_events=rag_events,
+    recent_messages=recent_messages,
+    user_input=user_input
+  )
   ↓
-[4] LLM API调用 (~15-20秒，不计入12秒预算)
-  response = await llm.generate(prompt)
+[4] LLM API调用 (~15-20秒，流式输出)
+  async for chunk in llm.generate_stream(prompt):
+      websocket.send(chunk)  # 实时发送到前端
   ↓
 [5] 解析LLM输出 (~50ms)
-  narrative, state_update = parse_response(response)
+  narrative = extract_narrative(response)
+  # AI 只返回叙事内容，不返回状态更新
   ↓
-[6] 更新状态 (~100ms)
-  if state_update:
-      apply_state_update("storylines/story_001/character_state.json", state_update)
+[6] 追加AI回复到会话文件 + 缓存 (~50ms)
+  append_to_file("sessions/{session_id}.jsonl", assistant_message)
+  recall_cache.append(assistant_message)
   ↓
-[7] 检查是否需要定期维护 (~50ms)
-  if current_turn % 10 == 0:
-      cleanup_character_state(state, current_turn)
-  ↓
-[8] 追加AI回复到会话文件 (~50ms)
-  append_to_file("sess_002.jsonl", assistant_message)
-  ↓
-[9] 异步写入事件（不阻塞返回）
-  if state_update:
-      asyncio.create_task(write_event_to_chroma_async(...))
-  ↓
-[10] 返回前端（流式发送）
-  websocket.send_stream(narrative_text)
+[7] 检查并执行维护任务 (~50ms 检查，维护任务异步执行)
+  maintenance_scheduler.check_and_execute()
 
-总计（非LLM）：~1.9秒 ✅
+  如果 recall_cache.needs_cleanup():
+    ├─ 同步执行：recall_cache.cleanup()  (~10ms)
+    └─ 异步执行：asyncio.create_task(
+          persona_updater.update(recent_messages)  # ~5-10秒 LLM 调用
+       )
+  ↓
+[8] 返回前端
+  websocket.send({"type": "done"})
+
+总计（非LLM）：~1.65秒 ✅
+
+维护任务（第 31、41、51... 轮触发）：
+- 清理缓存：同步执行，~10ms
+- 更新人格：异步执行，~5-10秒（不阻塞对话）
 ```
+
+### 关键变化
+
+1. **使用 RecallMemoryCache**：从内存缓存读取对话，不再每次从文件读取
+2. **AI 只返回叙事**：不再有 `state_update`，Core Memory 由定期维护任务更新
+3. **维护任务整合**：清理缓存 + 更新人格，在同一个时机触发
+4. **异步更新人格**：不阻塞对话流程，下一轮使用新的 evolved_persona
 
 ---
 
@@ -585,7 +600,7 @@ def cleanup_character_state(state, current_turn):
 
 ### Prompt模板结构
 
-**设计原则**：模块化、清晰、无量化
+**设计原则**：模块化、清晰、简洁
 
 ```
 ---SYSTEM_INSTRUCTION---
@@ -609,31 +624,16 @@ def cleanup_character_state(state, current_turn):
 {{world_rules}}
 ---
 
----CHARACTER_CORE---
-## Core Identity (Immutable) ##
-Archetype: {{archetype}}
-Core Goal: {{core_goal}}
-Core Traits: {{core_traits}}
-Background Story: {{background_story}}
----
+---CHARACTER_PERSONA---
+## Base Identity (Immutable Core) ##
+{{base_persona}}
 
----CHARACTER_GROWTH---
-## Growth & Deep Patterns ##
-Beliefs:
-{{beliefs_list}}
+## Evolved State (Growth Through Experience) ##
+{{evolved_persona}}
 
-Behavioral Patterns:
-{{patterns_list}}
-
-Relationships:
-{{relationships_list}}
----
-
----CHARACTER_CURRENT_STATE---
-## Current State ##
-Emotions: {{emotions_list}}
-Physical Condition: {{physical_condition}}
-Immediate Goals: {{immediate_goals_list}}
+注意：Base Identity 是角色的本质底色，永不改变。
+Evolved State 是角色经历成长后的状态。
+请综合考虑两者和当前对话上下文来生成角色的反应。
 ---
 
 ---RELEVANT_PAST_EVENTS---
@@ -642,7 +642,7 @@ Immediate Goals: {{immediate_goals_list}}
 ---
 
 ---RECENT_CONVERSATION---
-## Recent Conversation (Last 20 turns) ##
+## Recent Conversation ##
 {{recent_messages}}
 ---
 
@@ -652,41 +652,23 @@ Immediate Goals: {{immediate_goals_list}}
 ---
 
 ---TASK_INSTRUCTIONS---
-You MUST generate your response in two parts, enclosed in XML tags:
+请根据角色人格和当前情境，生成角色的叙事回应。
 
-**PART 1: THE NARRATIVE (<narrative>)**
-Generate the character's next action, dialogue, and inner thoughts.
-The narrative must reflect the character's current state.
+只需要返回叙事内容，用 <narrative> 标签包裹：
 
-**PART 2: THE STATE UPDATE (<state_update_json>)**
-Provide a JSON object describing changes to the character's state.
-Only include fields that have changed.
-
-Format:
-{
-  "growth_state": {
-    "beliefs": {
-      "add": [{"content": "...", "formed_from": "..."}]
-    },
-    "relationships": {
-      "update": [{"entity": "...", "status": "...", "history": "..."}]
-    }
-  },
-  "current_state": {
-    "emotions": {
-      "add": [{"content": "...", "context": "..."}]
-    },
-    "physical": {
-      "condition": "..."
-    }
-  }
-}
-
-If no state changes occurred, return an empty object: {}
+<narrative>
+角色的行为、对话、内心想法...
+</narrative>
 ---
 
 {{AI_GENERATION_STARTS_HERE}}
 ```
+
+### 关键变化
+
+1. **简化人格描述**：只有 `base_persona` + `evolved_persona`
+2. **删除状态更新要求**：AI 不再需要返回 `<state_update_json>`
+3. **更清晰的指令**：只要求返回叙事内容
 
 ---
 
@@ -694,32 +676,44 @@ If no state changes occurred, return an empty object: {}
 
 ### 事件写入时机
 
-**只在状态变化时写入事件**：
+**定期写入事件摘要**：
+
+由于 AI 不再返回状态更新，事件写入策略调整为：
 
 ```python
-async def handle_llm_response(storyline_id, session_id, turn, state_update):
-    if state_update:
-        # 有状态变化，说明发生重要事件
-        event = {
-            "event_id": f"evt_{storyline_id}_{session_id}_{turn}",
-            "storyline_id": storyline_id,
-            "session_id": session_id,
-            "turn": turn,
-            "summary": extract_summary(recent_messages),
-            "state_changes": state_update,
-            "timestamp": now()
-        }
+async def handle_persona_maintenance(instance_id, session_id, recent_messages):
+    """
+    在 Core Memory 维护时同步写入事件摘要
+    触发时机：每 30 轮（与 Recall Memory 清理同步）
+    """
+    # 1. 生成最近对话的摘要
+    summary = await llm_generate_summary(recent_messages)
 
-        # 异步写入，不阻塞返回
-        asyncio.create_task(write_event_to_chroma(event))
+    # 2. 创建事件记录
+    event = {
+        "event_id": f"evt_{instance_id}_{session_id}_{turn}",
+        "instance_id": instance_id,
+        "session_id": session_id,
+        "turn": turn,
+        "summary": summary,
+        "timestamp": now()
+    }
+
+    # 3. 异步写入，不阻塞返回
+    asyncio.create_task(write_event_to_chroma(event))
 ```
+
+**特点**：
+- 与人格维护同步，减少 LLM 调用次数
+- 每 30 轮生成一次摘要，记录重要事件
+- 异步写入，不影响对话流程
 
 ### RAG检索策略
 
-**关键**：必须过滤 `storyline_id`，避免不同故事线的事件混淆
+**关键**：必须过滤 `instance_id`，避免不同会话实例的事件混淆
 
 ```python
-async def rag_query_with_timeout(user_input, storyline_id, timeout=1.5):
+async def rag_query_with_timeout(user_input, instance_id, timeout=1.5):
     """
     RAG检索，带超时保护
     """
@@ -727,7 +721,7 @@ async def rag_query_with_timeout(user_input, storyline_id, timeout=1.5):
         events = await asyncio.wait_for(
             chroma.query(
                 query_text=user_input,
-                filter={"storyline_id": storyline_id},  # ← 必须过滤
+                filter={"instance_id": instance_id},  # ← 必须过滤
                 n_results=5
             ),
             timeout=timeout
@@ -751,20 +745,22 @@ async def rag_query_with_timeout(user_input, storyline_id, timeout=1.5):
 
 | 瓶颈 | 原因 | 解决方案 | 效果 |
 |------|------|----------|------|
-| RAG检索慢 | 事件库规模大 | 1. 过滤storyline_id<br>2. 超时保护(1.5s)<br>3. 限制事件库规模(每故事线<1000) | ~500-1500ms |
+| RAG检索慢 | 事件库规模大 | 1. 过滤instance_id<br>2. 超时保护(1.5s)<br>3. 限制事件库规模(每实例<1000) | ~500-1500ms |
 | 事件写入阻塞 | Embedding API调用 | 异步写入，不等待完成 | ~0ms（不阻塞） |
-| 多次文件读取 | 串行加载 | 并行加载（asyncio.gather） | 取最慢项 |
+| 多次文件读取 | 串行加载 | 并行加载（asyncio.gather） + RecallMemoryCache | 取最慢项 |
 
 ### 异步优化
 
 ```python
 # 并行执行多个IO操作
-recent, events, state, bg = await asyncio.gather(
-    read_recent_messages(storyline_id, n=20),
-    rag_query_with_timeout(user_input, storyline_id),
-    load_character_state(storyline_id),
+events, state, bg = await asyncio.gather(
+    rag_query_with_timeout(user_input, instance_id),
+    load_character_state(instance_id),
     load_background(background_id)
 )
+
+# 从内存缓存读取最近对话（不需要异步）
+recent_messages = recall_cache.get_for_prompt()  # ~0ms
 
 # 异步写入事件，不阻塞返回
 asyncio.create_task(write_event_async(...))
@@ -816,11 +812,11 @@ asyncio.create_task(write_event_async(...))
 
 ### ✅ 采用的设计
 
-1. **故事线架构** - 状态隔离，解决多会话状态污染问题
-2. **三层人格机制** - 静态 + 慢动态 + 快动态，纯定性描述
-3. **事件库过滤** - 必须记录storyline_id和session_id
-4. **定期维护任务** - 每10轮清理、去重、整理状态
-5. **性能优化** - 异步并行、超时保护、~2秒非LLM耗时
+1. **会话实例架构** - 状态隔离，解决多会话状态污染问题
+2. **Core Memory 动态管理** - base_persona + evolved_persona，自然语言描述
+3. **事件库过滤** - 必须记录instance_id和session_id
+4. **定期维护任务** - 每30轮清理Recall Memory + 更新evolved_persona
+5. **性能优化** - 异步并行、超时保护、RecallMemoryCache、~2秒非LLM耗时
 
 ### ❌ 删除的设计
 
@@ -829,6 +825,289 @@ asyncio.create_task(write_event_async(...))
 3. **事件链表** - 不使用previous_event，纯RAG
 4. **归档机制** - 不使用archived标记，简化设计
 5. **会话摘要** - 不需要session_summary，信任RAG
+
+---
+
+## 术语变更说明（v0.2.1）
+
+**重要**：本文档中大量使用了旧术语"故事线（Storyline）"，在 v0.2.1 版本后统一更新为"会话实例（Conversation Instance）"。
+
+### 术语对照表
+
+| 旧术语 | 新术语 | 说明 |
+|--------|--------|------|
+| 故事线（Storyline） | 会话实例（Conversation Instance） | 更准确表达其本质：状态隔离容器 |
+| `storyline_id` | `instance_id` | 数据库字段名 |
+| `storylines/` 目录 | `instances/` 目录 | 文件系统路径 |
+
+**原因**：
+- "故事线"容易与"剧情主线"混淆
+- "会话实例"更准确描述其作用：同一角色+背景可创建多个独立实例
+
+**文档更新计划**：
+- 本文档（DESIGN.md）将在后续版本中全文更新术语
+- 当前版本（v0.2.1）在本章节说明即可，避免大规模修改导致混乱
+
+---
+
+## 需求澄清后的新设计（v0.2.1）
+
+### 1. 故事主线大纲的灵活性
+
+**数据结构调整**：
+```json
+{
+  "story_outline": [
+    {"index": 1, "content": "发现背叛者的线索", "status": "completed"},
+    {"index": 2, "content": "潜入敌人据点", "status": "in_progress"},
+    // 数量不固定，由用户创建背景时编写（5-20个）
+  ],
+  "current_plot_index": 2,
+  "outline_completed": false  // 是否已完成全部大纲点
+}
+```
+
+**设计要点**：
+- 大纲点数量**不固定**，由用户自由编写
+- 大纲是**建议路线**，不是强制路线
+- 完成后进入**自由对话模式**（导演模块不再介入）
+
+---
+
+### 2. Core Memory 手动触发功能
+
+**功能需求**：
+- UI 位置：对话界面左侧/右侧功能区（垂直排列）
+- 按钮名称："🧠 更新记忆"
+- 执行方式：同步执行，显示加载状态（约 6-11 秒）
+
+**API 设计**：
+```python
+@router.post("/maintenance/core-memory")
+async def trigger_core_memory_maintenance(instance_id: str):
+    """
+    手动触发 Core Memory 维护
+    """
+    # 1. 加载当前 Core Memory
+    state = load_character_state(instance_id)
+
+    # 2. 加载最近 10 轮对话
+    recent_turns = load_recent_messages(instance_id, n=10)
+
+    # 3. 调用 LLM 重新生成 Core Memory
+    new_core_memory = await llm_regenerate_core_memory(
+        old_state=state,
+        recent_turns=recent_turns
+    )
+
+    # 4. 写入新的 Core Memory
+    save_character_state(instance_id, new_core_memory)
+
+    # 5. 可选：异步写入事件库
+    asyncio.create_task(write_maintenance_event(...))
+
+    return {"success": True, "message": "Core Memory 已更新"}
+```
+
+**后台管理端功能**：
+- 查看 Core Memory 维护历史
+- 查看每次维护的输入和输出
+- 回滚到历史版本
+
+---
+
+### 3. 导演模块的"拉回主线"功能
+
+**功能需求**：
+- UI 位置：对话界面左侧/右侧功能区（垂直排列）
+- 按钮名称："🎬 拉回主线"
+- 实现机制：通过**某种策略**将信息**插入到特定位置**，影响 Prompt 组装
+
+**设计思路**（待细化）：
+- 用户点击按钮后，后端触发特殊的 Prompt 注入
+- 具体策略和注入位置待后续讨论
+- 目标：自然地将偏离的剧情引导回主线
+
+---
+
+### 4. 事件写入失败的暂存机制
+
+**新增目录结构**：
+```
+data/
+├── instances/
+│   └── {instance_id}/
+│       ├── pending_events/          ← 新增：待写入事件暂存
+│       │   ├── pending_001.json
+│       │   ├── pending_002.json
+│       │   └── ...
+│       ├── metadata.json
+│       ├── character_state.json
+│       └── sessions/
+```
+
+**写入流程**：
+```python
+async def write_event_to_chroma(event_data, instance_id):
+    # 1. 先写入暂存文件
+    timestamp = now().isoformat()
+    pending_file = f"data/instances/{instance_id}/pending_events/pending_{timestamp}.json"
+    await write_json(pending_file, event_data)
+
+    try:
+        # 2. 尝试写入 Chroma
+        await chroma_collection.add(
+            embeddings=embed(event_data['content']),
+            documents=[event_data['content']],
+            metadatas=[event_data['metadata']]
+        )
+
+        # 3. 写入成功，删除暂存文件
+        await delete_file(pending_file)
+
+    except Exception as e:
+        # 4. 写入失败，保留暂存文件
+        logger.error(f"Failed to write event to Chroma: {e}")
+
+        # 5. 通知用户（通过 WebSocket）
+        await ws.send_json({
+            "type": "event_write_failed",
+            "message": "事件记录失败，已暂存待处理",
+            "pending_file": pending_file
+        })
+```
+
+**后台管理端 API**：
+```python
+# 获取所有待处理事件
+@router.get("/admin/pending-events")
+async def get_pending_events():
+    ...
+
+# 重试写入某个事件
+@router.post("/admin/pending-events/{file_id}/retry")
+async def retry_pending_event(file_id: str):
+    ...
+
+# 批量重试某个实例的所有事件
+@router.post("/admin/pending-events/retry-all")
+async def retry_all_pending_events(instance_id: str):
+    ...
+
+# 删除某个待处理事件
+@router.delete("/admin/pending-events/{file_id}")
+async def delete_pending_event(file_id: str):
+    ...
+```
+
+---
+
+### 5. UI 布局设计
+
+**三栏布局**（类似 SillyTavern）：
+
+```
+┌──────────┬─────────────────────────┬──────────┐
+│          │ [顶部功能栏]             │          │
+│          │ - 切换会话实例           │          │
+│          │ - 全局设置               │          │
+│          ├─────────────────────────┤          │
+│          │                         │          │
+│ 左侧边栏 │                         │ 右侧边栏 │
+│ (顶到底) │    对话消息区           │ (顶到底) │
+│          │    - AI 回复            │          │
+│ 🧠更新记忆│    - 用户消息           │ 📊角色状态│
+│          │    - 流式显示           │          │
+│ 🎬拉回主线│                         │ 📚历史事件│
+│          │                         │          │
+│ ⚙️ 设置   │                         │ 📖世界书  │
+│          │                         │          │
+│ ...     │                         │ ...     │
+│          │                         │          │
+│          ├─────────────────────────┤          │
+│          │ [用户输入框]   [发送]    │          │
+└──────────┴─────────────────────────┴──────────┘
+```
+
+**关键特性**：
+- **三个区域（左、中、右）都是从顶到底**
+- 中间区域内部分为三部分：
+  - 上：顶部功能栏（高度小）
+  - 中：对话消息区（高度大，可滚动）
+  - 下：用户输入框（高度小，与顶部功能栏面积相同）
+- 中间区域占比约 50%
+- 左右侧边栏可伸缩，功能按钮垂直排列
+
+---
+
+### 6. `[PROGRESS]` 标记机制的 Prompt 设计
+
+**System Prompt 示例**（放入头部 4K）：
+```
+【剧情进度报告规则】
+你必须在每次回复的末尾添加剧情进度标记，格式为：[PROGRESS:X:status]
+
+参数说明：
+- X: 当前大纲点的索引（1-N）
+- status: 进度状态
+  - in_progress: 正在进行此大纲点
+  - completed: 已完成此大纲点
+
+示例：
+用户："我走进了据点"
+AI回复："你推开生锈的铁门，据点内一片狼藉..." [PROGRESS:2:in_progress]
+
+当前剧情状态：
+{
+  "story_outline": [
+    {"index": 1, "content": "发现背叛者的线索", "status": "completed"},
+    {"index": 2, "content": "潜入敌人据点", "status": "in_progress"}, ← 当前这里
+    {"index": 3, "content": "与仇人对峙", "status": "pending"},
+    ...
+  ]
+}
+
+重要：如果你认为大纲点已经完成，立即标记为 completed！
+```
+
+**Few-shot Examples**（放入 Prompt）：
+```
+示例 1：
+User: 我在据点外观察
+Assistant: 你躲在废墟后，透过破碎的窗户看到里面有3个人影在移动... [PROGRESS:2:in_progress]
+
+示例 2：
+User: 我翻墙进入据点
+Assistant: 你成功翻过围墙，悄悄潜入据点内部。前方走廊传来脚步声... [PROGRESS:2:completed]
+
+示例 3：
+User: 我走向仇人所在的房间
+Assistant: 你推开房门，看到那个背叛你的人正坐在沙发上，冷笑着看向你... [PROGRESS:3:in_progress]
+```
+
+**后端正则扫描**：
+```python
+import re
+
+def extract_progress_tag(ai_response: str) -> tuple[str, dict]:
+    """
+    从 AI 回复中提取 [PROGRESS] 标记
+    返回：(清理后的回复, 进度信息)
+    """
+    pattern = r'\[PROGRESS:(\d+):(in_progress|completed|pending)\]'
+    match = re.search(pattern, ai_response)
+
+    if match:
+        index = int(match.group(1))
+        status = match.group(2)
+
+        # 从回复中删除标记
+        cleaned_response = re.sub(pattern, '', ai_response).strip()
+
+        return cleaned_response, {"index": index, "status": status}
+    else:
+        return ai_response, None
+```
 
 ---
 

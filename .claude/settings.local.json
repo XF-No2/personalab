@@ -9,7 +9,13 @@
       "Bash(curl:*)",
       "Bash(git remote set-url:*)",
       "Bash(ssh:*)",
-      "Bash(git -c http.proxy=\"\" -c https.proxy=\"\" push)"
+      "Bash(git -c http.proxy=\"\" -c https.proxy=\"\" push)",
+      "Bash(git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push)",
+      "Bash(git -c http.proxy=socks5://127.0.0.1:7891 -c https.proxy=socks5://127.0.0.1:7891 push)",
+      "Bash(findstr:*)",
+      "Bash(git -c http.proxy=http://127.0.0.1:8765 -c https.proxy=http://127.0.0.1:8765 push)",
+      "Bash(mkdir:*)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []
