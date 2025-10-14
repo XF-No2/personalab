@@ -1,8 +1,8 @@
 # PersonaLab 技术设计文档
 
-**文档版本**: v0.1.0
+**文档版本**: v0.2.0
 **创建日期**: 2025-10-13
-**最后更新**: 2025-10-13
+**最后更新**: 2025-10-14
 
 ---
 
@@ -10,14 +10,14 @@
 
 1. [系统总目标](#系统总目标)
 2. [核心概念](#核心概念)
-3. [数据结构设计](#数据结构设计)
-4. [文件组织结构](#文件组织结构)
-5. [核心交互流程](#核心交互流程)
-6. [Prompt工程](#prompt工程)
-7. [状态管理机制](#状态管理机制)
-8. [事件归档机制](#事件归档机制)
-9. [技术栈](#技术栈)
-10. [待解决问题](#待解决问题)
+3. [架构设计](#架构设计)
+4. [数据结构设计](#数据结构设计)
+5. [人格三层机制](#人格三层机制)
+6. [核心交互流程](#核心交互流程)
+7. [Prompt工程](#prompt工程)
+8. [事件库与RAG](#事件库与rag)
+9. [性能优化](#性能优化)
+10. [技术栈](#技术栈)
 
 ---
 
@@ -33,23 +33,52 @@
 
 ### 解决方案
 
-通过**显式状态管理 + RAG增强记忆**：
-- 动态人格档案（dynamic_profile.json）- 存储角色当前状态
-- 长期记忆 - 事件日志（event_log）- 向量检索历史事件
+通过**故事线隔离 + 三层人格 + RAG增强记忆**：
+- 故事线（Storyline）- 独立的故事世界，状态隔离
+- 三层人格机制 - 静态核心 + 慢动态成长 + 快动态状态
+- 事件库（Event Library）- 向量检索历史事件
 - 结构化Prompt工程 - 强制LLM始终关注核心状态
 
 ---
 
 ## 核心概念
 
+### 故事线（Storyline）
+
+**定义**：一条独立的、连续的故事世界。
+
+**特点**：
+- 用户创建故事线时，选择角色和背景
+- 故事线内可以有多个会话（暂停/继续）
+- 角色状态属于故事线，不属于全局
+- 不同故事线完全隔离，互不影响
+
+**类比**：
+```
+角色：Alserqi
+
+故事线A："盟友之路"
+  - 会话1：初次见面
+  - 会话2：建立信任（继续故事线A）
+  - 会话3：共同战斗（继续故事线A）
+  → 角色状态：与用户是盟友
+
+故事线B："敌对之路"（独立故事）
+  - 会话4：敌对相遇
+  - 会话5：冲突升级（继续故事线B）
+  → 角色状态：与用户是敌人
+
+两条故事线的角色状态完全独立，互不干扰
+```
+
 ### 人格成长的逻辑闭环
 
 ```
-1. 主人公当前状态（dynamic_profile）
+1. 角色当前状态（三层人格）
    ↓
 2. 事件触发（用户输入/剧情推进）
    ↓
-3. 主人公的反应（想法 + 行为）← LLM生成
+3. 角色的反应（想法 + 行为）← LLM生成
    ↓
 4. 客观结果（事实）
    ↓
@@ -68,168 +97,71 @@
 - "关系从陌生人变盟友"才是状态变化
 - 事件是连续流，不是离散轮次
 
-### 两个核心积累
+---
 
-#### 1. 人格库（Character Library）
-- 经过N次交互后形成的**丰富人格档案**
-- 包含：核心人格特质、经历过的关键事件、形成的认知模式、关系网络、成长轨迹
+## 架构设计
 
-#### 2. 事件库（Event Library）
-- 提炼出的**事件模式**（抽象化，脱离具体角色）
-- 跨角色共享，新角色可参考过去积累的经验
+### 文件组织结构
+
+```
+data/
+├── characters/                          # 角色库（全局）
+│   └── {character_id}/
+│       └── definition.json              # 角色静态定义
+│
+├── backgrounds/                         # 背景库（全局）
+│   └── {background_id}.json             # 背景定义
+│
+├── storylines/                          # 故事线（核心）
+│   └── {storyline_id}/
+│       ├── metadata.json                # 故事线元数据
+│       ├── character_state.json         # 故事线的角色状态
+│       └── sessions/
+│           ├── sess_001.jsonl           # 会话1
+│           ├── sess_002.jsonl           # 会话2（继续故事）
+│           └── sess_003.jsonl           # 会话3（继续故事）
+│
+├── event_library/                       # 全局事件库
+│   └── chroma_db/                       # 向量数据库
+│       # 存储所有事件，带storyline_id和session_id过滤标记
+│
+└── prompt_templates/                    # Prompt模板
+    └── default_v1.json
+```
+
+### ID关联关系
+
+```
+角色定义（全局唯一）
+  └── character_id: "alserqi_v1"
+
+故事线（独立世界）
+  └── storyline_id: "story_001"
+      ├── character_id: "alserqi_v1"     ← 引用角色
+      ├── background_id: "wasteland"     ← 引用背景
+      ├── character_state.json           ← 状态属于故事线
+      └── sessions/
+          ├── sess_001.jsonl
+          │   └── session_id: "sess_001"
+          └── sess_002.jsonl
+              └── session_id: "sess_002"
+
+事件库（全局，但带标记）
+  └── event_id: "evt_story001_sess001_030"
+      ├── storyline_id: "story_001"      ← 必须！用于过滤
+      ├── session_id: "sess_001"         ← 必须！用于追溯
+      └── turn: 30                       ← 会话内第几轮
+```
 
 ---
 
 ## 数据结构设计
 
-### 1. 动态人格档案（dynamic_profile.json）
-
-**存储位置**：`data/characters/{character_id}/dynamic_profile.json`
-
-**用途**：存储角色的当前状态，每次AI回复后实时更新
-
-**设计原则**：
-- ✅ 定性描述（如 "Rage", "Complicated_Ally"）
-- ❌ 不使用量化内容（如 trust_level: 5/10, anger: 9/10）
-- ✅ 条目化累加（优先级队列）
-- ❌ 不删除条目，只调整优先级
-
-**结构示例**：
-
-```json
-{
-  "character_id": "alserqi_v1",
-  "core_identity": {
-    "archetype": "Vengeful Anti-hero",
-    "core_goal": "Destroy the 'Core'",
-    "personality_traits": ["Cynical", "Pragmatic", "Loyal_to_few"]
-  },
-  "dynamic_state": {
-    "emotions": {
-      "items": [
-        {
-          "content": "Weary",
-          "priority": 10,
-          "timestamp": "2025-10-13T10:00:00Z"
-        },
-        {
-          "content": "Rage",
-          "priority": 8,
-          "timestamp": "2025-10-12T15:30:00Z"
-        }
-      ]
-    },
-    "physical_condition": {
-      "items": [
-        {
-          "content": "Exhausted, left arm injured",
-          "priority": 10,
-          "timestamp": "2025-10-13T09:00:00Z"
-        }
-      ]
-    },
-    "short_term_goals": {
-      "items": [
-        {
-          "goal": "Find B",
-          "reason": "Need his intel",
-          "priority": 9,
-          "timestamp": "2025-10-13T08:00:00Z"
-        }
-      ]
-    },
-    "relationships": {
-      "items": [
-        {
-          "entity": "user",
-          "status": "Trusted_Companion",
-          "priority": 10,
-          "timestamp": "2025-10-13T10:00:00Z"
-        },
-        {
-          "entity": "character_B",
-          "status": "Betrayer",
-          "priority": 9,
-          "timestamp": "2025-10-12T20:00:00Z"
-        }
-      ]
-    },
-    "learned_patterns": {
-      "items": [
-        {
-          "pattern": "Trust must be earned through actions, not words",
-          "priority": 8,
-          "timestamp": "2025-10-12T18:00:00Z"
-        }
-      ]
-    }
-  }
-}
-```
-
-**状态更新操作**：
-- `add`：添加新条目
-- `update_priority`：调整现有条目的优先级
-
-**Prompt使用策略**：
-- 只取每个字段的前N个高优先级条目（如前5个）
-- 低优先级条目保留但不进入Prompt
-
-**定时维护任务**：
-- 每10轮对话后执行去重
-- 合并重复内容（保留最高优先级）
-- 降低旧条目的优先级
-- 删除过低优先级条目（如 priority < 3）
-
----
-
-### 2. 长期记忆 - 事件日志（event_log）
-
-**存储位置**：`data/event_library/chroma_db/`（全局，所有角色共享）
-
-**用途**：永久存储提炼出的关键事件，用于RAG检索
-
-**设计原则**：
-- 完全与角色脱钩（不记录character_id、session_id）
-- 记录抽象化的"事件模式"
-- 通过语义检索匹配相似情境
-
-**结构示例**：
-
-```json
-{
-  "event_id": "evt_uuid",
-  "summary": "一个愤世嫉俗的角色，最初不信任陌生人的帮助承诺，但看到真实证据后震惊，关系从陌生人转为潜在盟友",
-  "pattern": {
-    "precondition": "角色具有不信任特质，面对陌生人的帮助承诺",
-    "trigger": "对方出示了无法反驳的证据",
-    "reaction": "从轻蔑 → 震惊",
-    "impact": "关系质变，从陌生人 → 潜在盟友"
-  },
-  "impact": {
-    "state_changes": [
-      {
-        "field": "relationships",
-        "change": "Stranger → Potential_Ally"
-      },
-      {
-        "field": "emotions",
-        "change": "Contempt → Shock"
-      }
-    ]
-  },
-  "narrative_fragment": "他看到文件，瞳孔微缩。他的手不自觉地伸向文件，但又强迫自己收回...",
-  "timestamp": "2025-10-13T10:30:00Z"
-}
-```
-
----
-
-### 3. 角色定义（Character）
+### 1. 角色定义（Character Definition）
 
 **存储位置**：`data/characters/{character_id}/definition.json`
 
-**用途**：角色的静态定义，创建会话时使用
+**用途**：角色的静态定义，全局共享
 
 **结构示例**：
 
@@ -243,35 +175,26 @@
     "core_identity": {
       "archetype": "Vengeful Anti-hero",
       "core_goal": "Destroy the 'Core'",
-      "personality_traits": ["Cynical", "Pragmatic", "Loyal_to_few"]
+      "core_traits": ["Cynical", "Pragmatic", "Loyal_to_few"],
+      "background_story": "曾是组织的精英战士，因发现真相被背叛"
     },
-    "dynamic_state": {
-      "emotions": {
-        "items": [
-          {"content": "Neutral", "priority": 5, "timestamp": "..."}
-        ]
-      },
-      "relationships": {
-        "items": []
-      },
-      "short_term_goals": {
-        "items": []
-      },
-      "learned_patterns": {
-        "items": []
-      }
+    "growth_state": {
+      "beliefs": [],
+      "behavioral_patterns": [],
+      "relationships": []
+    },
+    "current_state": {
+      "emotions": ["Neutral"],
+      "physical": "健康",
+      "immediate_goals": []
     }
   }
 }
 ```
 
-**初始化流程**：
-- 用户创建角色时，生成 `definition.json`
-- 第一次使用角色时，复制 `initial_profile` 到 `dynamic_profile.json`
-
 ---
 
-### 4. 背景定义（Background）
+### 2. 背景定义（Background）
 
 **存储位置**：`data/backgrounds/{background_id}.json`
 
@@ -291,9 +214,125 @@
 
 ---
 
-### 5. 会话文件（Session）
+### 3. 故事线元数据（Storyline Metadata）
 
-**存储位置**：`data/sessions/sess_{uuid}.jsonl`
+**存储位置**：`storylines/{storyline_id}/metadata.json`
+
+**用途**：记录故事线的基本信息
+
+**结构示例**：
+
+```json
+{
+  "storyline_id": "story_001",
+  "title": "盟友之路",
+  "character_id": "alserqi_v1",
+  "background_id": "wasteland_world",
+  "created_at": "2025-10-01T10:00:00Z",
+  "last_active_at": "2025-10-10T15:00:00Z",
+  "total_turns": 250,
+  "sessions": [
+    {
+      "session_id": "sess_001",
+      "created_at": "2025-10-01T10:00:00Z",
+      "turns": 100
+    },
+    {
+      "session_id": "sess_002",
+      "created_at": "2025-10-05T14:00:00Z",
+      "turns": 150
+    }
+  ],
+  "status": "active"
+}
+```
+
+---
+
+### 4. 角色状态（Character State）
+
+**存储位置**：`storylines/{storyline_id}/character_state.json`
+
+**用途**：存储角色在当前故事线的状态
+
+**结构示例**（详见"人格三层机制"章节）：
+
+```json
+{
+  "storyline_id": "story_001",
+  "character_id": "alserqi_v1",
+  "last_updated_turn": 250,
+  "last_maintenance_turn": 240,
+
+  "core_identity": {
+    "archetype": "Vengeful Anti-hero",
+    "core_goal": "Destroy the 'Core'",
+    "core_traits": ["Cynical", "Pragmatic", "Loyal_to_few"],
+    "background_story": "曾是组织的精英战士，因发现真相被背叛"
+  },
+
+  "growth_state": {
+    "beliefs": [
+      {
+        "content": "Trust must be earned through actions, not words",
+        "formed_from": "多次被背叛的经历",
+        "timestamp": "2025-10-12T18:00:00Z"
+      }
+    ],
+    "behavioral_patterns": [
+      {
+        "pattern": "Always verify information before acting",
+        "timestamp": "2025-10-12T19:00:00Z"
+      }
+    ],
+    "relationships": [
+      {
+        "entity": "user",
+        "status": "Trusted_Companion",
+        "history": "经历了考验、背叛、解释、原谅的完整循环",
+        "timestamp": "2025-10-13T10:00:00Z"
+      }
+    ]
+  },
+
+  "current_state": {
+    "emotions": [
+      {
+        "content": "Weary",
+        "context": "长时间的战斗和逃亡",
+        "timestamp": "2025-10-13T10:00:00Z"
+      },
+      {
+        "content": "Cautious_Hope",
+        "context": "与user的合作进展顺利",
+        "timestamp": "2025-10-13T09:00:00Z"
+      }
+    ],
+    "physical": {
+      "condition": "Exhausted, left arm injured",
+      "timestamp": "2025-10-13T09:00:00Z"
+    },
+    "immediate_goals": [
+      {
+        "goal": "Find safe shelter",
+        "reason": "Need to rest and treat wounds",
+        "timestamp": "2025-10-13T10:00:00Z"
+      },
+      {
+        "goal": "Contact B for intel",
+        "reason": "Need information about Core's movements",
+        "timestamp": "2025-10-13T09:30:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 5. 会话消息（Session Messages）
+
+**存储位置**：`storylines/{storyline_id}/sessions/{session_id}.jsonl`
 
 **用途**：记录完整对话历史
 
@@ -304,122 +343,252 @@
 **示例**：
 
 ```jsonl
-{"type": "metadata", "character_id": "alserqi_v1", "background_id": "wasteland_world", "title": "与Alserqi的第一次对话", "created_at": "2025-10-13T10:00:00Z"}
-{"role": "user", "content": "你这个骗子！", "archived": false, "timestamp": "2025-10-13T10:30:00Z"}
-{"role": "assistant", "content": "Alserqi听了你的话，眼中闪过一丝轻蔑...", "archived": false, "timestamp": "2025-10-13T10:30:05Z"}
-{"role": "user", "content": "我有证据", "archived": true, "timestamp": "2025-10-13T10:31:00Z"}
-{"role": "assistant", "content": "他看到文件，瞳孔微缩...", "archived": true, "timestamp": "2025-10-13T10:31:08Z"}
+{"type": "metadata", "session_id": "sess_001", "storyline_id": "story_001", "started_at": "2025-10-01T10:00:00Z"}
+{"role": "user", "content": "你这个骗子！", "turn": 1, "timestamp": "2025-10-01T10:00:05Z"}
+{"role": "assistant", "content": "Alserqi听了你的话，眼中闪过一丝轻蔑...", "turn": 1, "timestamp": "2025-10-01T10:00:20Z"}
+{"role": "user", "content": "我有证据", "turn": 2, "timestamp": "2025-10-01T10:01:00Z"}
+{"role": "assistant", "content": "他看到文件，瞳孔微缩...", "turn": 2, "timestamp": "2025-10-01T10:01:15Z"}
 ```
 
-**字段说明**：
-- `archived`: false（未归档，进入Prompt）/ true（已归档，已提取到event_log）
-
 **特点**：
-- 一个会话一个文件
-- 可能包含几十上百条消息
-- 永久保存，不删除
-- 支持导出功能
+- 简单的消息流水账
+- 不需要archived标记（不使用归档机制）
+- 永久保存，支持导出功能
 
 ---
 
-## 文件组织结构
+### 6. 事件（Event）
 
-```
-data/
-├── characters/                      # 角色库
-│   ├── alserqi_v1/
-│   │   ├── definition.json         # 角色定义（静态）
-│   │   └── dynamic_profile.json    # 人格状态（动态，全局共享）
-│   └── character_b/
-│       ├── definition.json
-│       └── dynamic_profile.json
-│
-├── backgrounds/                     # 背景库
-│   ├── wasteland_world.json
-│   └── cyberpunk_city.json
-│
-├── sessions/                        # 会话文件
-│   ├── sess_001.jsonl              # 会话1（可能几十上百条消息）
-│   ├── sess_002.jsonl              # 会话2
-│   └── sess_003.jsonl
-│
-├── event_library/                   # 全局事件库
-│   └── chroma_db/                  # 向量数据库
-│
-└── prompt_templates/                # Prompt模板管理
-    └── default_v1.json
+**存储位置**：`data/event_library/chroma_db/`（向量数据库）
+
+**用途**：存储重要事件，用于RAG检索
+
+**结构示例**：
+
+```json
+{
+  "event_id": "evt_story001_sess001_030",
+  "storyline_id": "story_001",
+  "session_id": "sess_001",
+  "turn": 30,
+  "summary": "用户展示证据，Alserqi从怀疑转为信任",
+  "full_context": "用户：'我有证据' → Alserqi看到文件，瞳孔微缩... → 关系改变",
+  "state_changes": {
+    "relationships": "Stranger → Potential_Ally"
+  },
+  "timestamp": "2025-10-01T10:30:00Z",
+  "embedding": [0.1, 0.2, 0.3, ...]
+}
 ```
 
-**关键特性**：
-- **角色状态全局共享**：同一角色的所有会话共享 `dynamic_profile.json`
-- **事件库全局共享**：所有角色、所有会话的事件存入同一个向量库
-- **会话文件独立**：一个会话一个 `.jsonl` 文件
+**关键字段**：
+- `storyline_id` - **必须**，用于RAG检索时过滤，避免不同故事线的事件混淆
+- `session_id` - **必须**，用于追溯和调试
+- `turn` - 会话内的第几轮，用于精确定位
+- 不需要 `previous_event`（不使用链表结构，纯RAG）
+
+---
+
+## 人格三层机制
+
+### 核心原理
+
+**三层的本质**：不是"分几个字段"，而是**数据的变化速度不同**。
+
+```
+第1层：静态（永不变化）
+  ↓
+第2层：慢动态（重大事件才变化）
+  ↓
+第3层：快动态（频繁变化）
+```
+
+### 实现方式
+
+```json
+{
+  // 第1层：静态核心（永不变化）
+  "core_identity": {
+    "archetype": "Vengeful Anti-hero",
+    "core_goal": "Destroy the 'Core'",
+    "core_traits": ["Cynical", "Pragmatic", "Loyal_to_few"],
+    "background_story": "..."
+  },
+
+  // 第2层：慢动态（成长层）
+  "growth_state": {
+    "beliefs": [...],           // 形成的深层信念
+    "behavioral_patterns": [...],// 行为模式
+    "relationships": [...]       // 关系深度
+  },
+
+  // 第3层：快动态（状态层）
+  "current_state": {
+    "emotions": [...],           // 当前情绪
+    "physical": {...},           // 身体状况
+    "immediate_goals": [...]     // 短期目标
+  }
+}
+```
+
+### 设计原则
+
+**❌ 绝对禁止量化**：
+- 不使用 `priority`, `intensity`, `level` 等数字
+- 不使用 `每N轮-1` 的降级机制
+- 不使用数字阈值判断删除
+
+**✅ 纯定性描述**：
+- 所有内容都是文本描述
+- 用 `timestamp` 记录时间
+- 用定期维护任务清理过时数据
+
+### 变化机制
+
+```python
+# 第1层：永不变化
+# core_identity 从 definition.json 复制后，不再修改
+
+# 第2层：重大事件才变化
+if is_major_event(state_update):  # 如：关系质变、核心信念动摇
+    growth_state["beliefs"].append({
+        "content": "新信念",
+        "formed_from": "事件描述",
+        "timestamp": now()
+    })
+
+# 第3层：每次交互可能变化
+current_state["emotions"].append({
+    "content": "Betrayed",
+    "context": "用户承认一直在欺骗",
+    "timestamp": now()
+})
+```
+
+### 定期维护任务
+
+**触发条件**：每10轮对话执行一次
+
+**操作内容**：
+
+```python
+def cleanup_character_state(state, current_turn):
+    """
+    定期维护：清理、去重、整理动态状态
+    """
+    # 1. 快动态层：清理过多数据
+    # emotions只保留最新的5个
+    if len(state["current_state"]["emotions"]) > 5:
+        state["current_state"]["emotions"] = \
+            state["current_state"]["emotions"][-5:]
+
+    # immediate_goals只保留最新的3个
+    if len(state["current_state"]["immediate_goals"]) > 3:
+        state["current_state"]["immediate_goals"] = \
+            state["current_state"]["immediate_goals"][-3:]
+
+    # 2. 慢动态层：去重、合并
+    # 去重beliefs（相同内容合并）
+    beliefs_dict = {}
+    for belief in state["growth_state"]["beliefs"]:
+        content = belief["content"]
+        if content not in beliefs_dict:
+            beliefs_dict[content] = belief
+        else:
+            # 保留最新的timestamp
+            if belief["timestamp"] > beliefs_dict[content]["timestamp"]:
+                beliefs_dict[content] = belief
+    state["growth_state"]["beliefs"] = list(beliefs_dict.values())
+
+    # 3. 合并同一实体的关系（保留最新）
+    relationships_dict = {}
+    for rel in state["growth_state"]["relationships"]:
+        entity = rel["entity"]
+        if entity not in relationships_dict:
+            relationships_dict[entity] = rel
+        else:
+            if rel["timestamp"] > relationships_dict[entity]["timestamp"]:
+                relationships_dict[entity] = rel
+    state["growth_state"]["relationships"] = list(relationships_dict.values())
+
+    # 4. 更新维护轮次
+    state["last_maintenance_turn"] = current_turn
+```
+
+**关键**：
+- 不是"衰减"，是"清理过多累积"
+- 不使用数字降级，而是控制数量上限
+- 慢动态层去重、合并
+- 快动态层只保留最新N个
 
 ---
 
 ## 核心交互流程
 
-### 完整流程（需求B：一次完整交互）
+### 一次完整交互（性能优化版）
+
+**性能目标**：
+- 总耗时：< 30秒
+- 非LLM耗时：< 12秒（实际约2秒）
+- LLM耗时：15-20秒
+
+**流程**：
 
 ```
-用户输入："你这个骗子！"
+用户输入："你还记得我说的话吗？"
   ↓
-Step 1: 追加消息到会话文件
-  append_to_file("sess_001.jsonl", user_message)
+[1] 追加消息到会话文件 (~50ms)
+  append_to_file("storylines/story_001/sessions/sess_002.jsonl", user_message)
   ↓
-Step 2: 异步RAG检索（并行）
-  - 读取会话文件，获取未归档消息
-  - 将用户输入向量化
-  - 从event_library检索Top-K=3相关事件
+[2] 并行执行（总耗时取最慢的）
+  await asyncio.gather(
+    read_recent_messages(storyline_id, n=20),         # ~100ms
+    rag_query_with_timeout(user_input, storyline_id), # ~500-1500ms
+    load_character_state(storyline_id),               # ~50ms
+    load_background(background_id)                    # ~50ms
+  )
+  并行耗时：max(100, 1500, 50, 50) = ~1500ms
   ↓
-Step 3: 构建Prompt（主线程等待RAG完成，超时1.5秒）
-  - 读取会话metadata，获取character_id, background_id
-  - 加载character的dynamic_profile.json
-  - 加载background的description
-  - 格式化RAG检索结果
-  - 读取会话文件的未归档消息（最近20轮）
-  - 组装最终Prompt
+[3] 组装Prompt (~100ms)
+  prompt = build_prompt(state, background, rag_events, recent_msgs, user_input)
   ↓
-Step 4: LLM API调用（单次请求）
-  - 发送Prompt
+[4] LLM API调用 (~15-20秒，不计入12秒预算)
+  response = await llm.generate(prompt)
   ↓
-Step 5: 接收LLM输出
-  - 返回：<narrative>...</narrative><state_update_json>...</state_update_json>
+[5] 解析LLM输出 (~50ms)
+  narrative, state_update = parse_response(response)
   ↓
-Step 6: 输出解析与验证
-  - 提取narrative_text
-  - 提取state_update_json
-  - 验证格式：如果解析失败 → 抛异常，事务回滚，返回错误给用户
+[6] 更新状态 (~100ms)
+  if state_update:
+      apply_state_update("storylines/story_001/character_state.json", state_update)
   ↓
-Step 7: 状态更新（原子替换）
-  - 如果state_update_json不为空：
-    * 加载dynamic_profile.json
-    * 执行条目化累加（add操作）
-    * 原子写回文件
-  - 如果为空：不更新
+[7] 检查是否需要定期维护 (~50ms)
+  if current_turn % 10 == 0:
+      cleanup_character_state(state, current_turn)
   ↓
-Step 8: 追加AI回复到会话文件
-  append_to_file("sess_001.jsonl", assistant_message)
+[8] 追加AI回复到会话文件 (~50ms)
+  append_to_file("sess_002.jsonl", assistant_message)
   ↓
-Step 9: 异步归档（不阻塞，后台任务）
-  - 判断最近未归档消息是否构成事件
-  - 如果是：提取事件 → 写入event_library → 标记消息为archived
+[9] 异步写入事件（不阻塞返回）
+  if state_update:
+      asyncio.create_task(write_event_to_chroma_async(...))
   ↓
-Step 10: 返回前端（流式发送）
-  - WebSocket分块发送narrative_text（打字机效果）
-  - 发送完成信号
+[10] 返回前端（流式发送）
+  websocket.send_stream(narrative_text)
+
+总计（非LLM）：~1.9秒 ✅
 ```
 
 ---
 
 ## Prompt工程
 
-### Prompt模板结构（需求A）
+### Prompt模板结构
 
-**设计原则**：模块化、可配置、优先级分层
+**设计原则**：模块化、清晰、无量化
 
 ```
----SYSTEM_INSTRUCTION (META_LEVEL)---
+---SYSTEM_INSTRUCTION---
 ## System Role ##
 你是一个第三人称叙事者，描述主角[角色名]的行为、想法和遭遇。
 用户的输入可能是：
@@ -429,267 +598,176 @@ Step 10: 返回前端（流式发送）
 你需要根据主角的当前状态和人格特质，生成主角的反应。
 ---
 
----JAILBREAK_PREVENTION (META_LEVEL)---
+---JAILBREAK_PREVENTION---
 ## Critical Rules ##
 你必须严格保持角色人设，不得脱离角色设定。
 ---
 
----BACKGROUND_CONTEXT (SYSTEM_LEVEL)---
+---BACKGROUND_CONTEXT---
 ## World Setting ##
 {{background_description}}
 {{world_rules}}
 ---
 
----IDENTITY_AND_STATE_BLOCK (HIGHEST_PRIORITY)---
-## Core Identity & Current State ##
-{{dynamic_profile_json_content}}
+---CHARACTER_CORE---
+## Core Identity (Immutable) ##
+Archetype: {{archetype}}
+Core Goal: {{core_goal}}
+Core Traits: {{core_traits}}
+Background Story: {{background_story}}
 ---
 
----LONG_TERM_MEMORY_BLOCK (RETRIEVED_VIA_RAG)---
-## Relevant Past Events ##
-{{rag_retrieved_events_formatted_text}}
+---CHARACTER_GROWTH---
+## Growth & Deep Patterns ##
+Beliefs:
+{{beliefs_list}}
+
+Behavioral Patterns:
+{{patterns_list}}
+
+Relationships:
+{{relationships_list}}
 ---
 
----RECENT_CHAT_HISTORY---
-## Conversation So Far ##
-{{last_N_unarchived_messages}}
+---CHARACTER_CURRENT_STATE---
+## Current State ##
+Emotions: {{emotions_list}}
+Physical Condition: {{physical_condition}}
+Immediate Goals: {{immediate_goals_list}}
+---
+
+---RELEVANT_PAST_EVENTS---
+## Relevant Past Events (RAG Retrieved) ##
+{{rag_events_formatted}}
+---
+
+---RECENT_CONVERSATION---
+## Recent Conversation (Last 20 turns) ##
+{{recent_messages}}
 ---
 
 ---USER_INPUT---
-## User's Latest Action/Dialogue ##
-{{user_input_text}}
+## User's Latest Input ##
+{{user_input}}
 ---
 
----TASK_INSTRUCTIONS (CRITICAL)---
-You MUST generate your response in two parts, enclosed in the specified XML tags.
+---TASK_INSTRUCTIONS---
+You MUST generate your response in two parts, enclosed in XML tags:
 
 **PART 1: THE NARRATIVE (<narrative>)**
-Based on all the information above, generate the character's next action and dialogue.
-The narrative must reflect the character's current state and be a logical continuation of the events.
+Generate the character's next action, dialogue, and inner thoughts.
+The narrative must reflect the character's current state.
 
 **PART 2: THE STATE UPDATE (<state_update_json>)**
-After the narrative, provide a JSON object describing ALL changes to the character's state that occurred within your narrative.
-The JSON object must ONLY contain the fields that have changed.
+Provide a JSON object describing changes to the character's state.
+Only include fields that have changed.
 
 Format:
 {
-  "dynamic_state": {
-    "<field_name>": {
-      "add": [
-        {"content": "...", "priority": N}
-      ],
-      "update_priority": [
-        {"content": "...", "new_priority": N}
-      ]
+  "growth_state": {
+    "beliefs": {
+      "add": [{"content": "...", "formed_from": "..."}]
+    },
+    "relationships": {
+      "update": [{"entity": "...", "status": "...", "history": "..."}]
+    }
+  },
+  "current_state": {
+    "emotions": {
+      "add": [{"content": "...", "context": "..."}]
+    },
+    "physical": {
+      "condition": "..."
     }
   }
 }
 
-If no state changes occurred (the character's reaction is a natural expression of existing state), return an empty object: {}
+If no state changes occurred, return an empty object: {}
 ---
 
 {{AI_GENERATION_STARTS_HERE}}
 ```
 
-### Prompt模板管理
-
-**存储位置**：`data/prompt_templates/default_v1.json`
-
-**结构**：
-
-```json
-{
-  "template_id": "default_v1",
-  "modules": [
-    {
-      "name": "system_instruction",
-      "priority": 1,
-      "enabled": true,
-      "content": "你是一个第三人称叙事者..."
-    },
-    {
-      "name": "jailbreak_prevention",
-      "priority": 2,
-      "enabled": true,
-      "content": "你必须严格保持角色人设..."
-    },
-    {
-      "name": "background",
-      "priority": 3,
-      "enabled": true,
-      "content_source": "dynamic",
-      "template": "## World Setting ##\n{{background_description}}"
-    },
-    {
-      "name": "character_state",
-      "priority": 4,
-      "enabled": true,
-      "content_source": "dynamic",
-      "template": "## Current State ##\n{{dynamic_profile_json}}"
-    },
-    {
-      "name": "memory",
-      "priority": 5,
-      "enabled": true,
-      "content_source": "rag",
-      "template": "## Relevant Past Events ##\n{{rag_events}}"
-    },
-    {
-      "name": "chat_history",
-      "priority": 6,
-      "enabled": true,
-      "content_source": "messages",
-      "template": "## Recent Conversation ##\n{{unarchived_messages}}"
-    }
-  ]
-}
-```
-
-**前端管理功能**：
-- `/prompt-templates` 页面
-- 增删改查模块
-- 拖拽排序
-- 开关模块
-- 实时预览
-
 ---
 
-## 状态管理机制
+## 事件库与RAG
 
-### 状态更新触发条件
+### 事件写入时机
 
-**只在发生"意外"时更新状态**
-
-**意外的定义**：
-- 主观预期（基于当前人格特质的推断）
-- 客观结果（实际发生的事情）
-- 两者产生差异
-
-**示例A：有影响**
-```
-当前状态：Alserqi不信任陌生人（Cynical特质）
-事件：陌生人声称能帮忙 → Alserqi轻蔑（符合预期，无需更新）
-事件：陌生人拿出真实证据 → Alserqi震惊（意外！）
-状态更新：relationships.user: Stranger → Potential_Ally
-```
-
-**示例B：无影响**
-```
-当前状态：Alserqi不信任陌生人
-事件：陌生人声称能帮忙 → Alserqi轻蔑
-事件：陌生人无法证明 → Alserqi离开（符合预期）
-状态更新：无（state_update_json为空）
-```
-
-### 状态更新操作
-
-**LLM输出的state_update_json格式**：
-
-```json
-{
-  "dynamic_state": {
-    "emotions": {
-      "add": [
-        {"content": "Shock", "priority": 9}
-      ]
-    },
-    "relationships": {
-      "add": [
-        {"entity": "user", "status": "Potential_Ally", "priority": 7}
-      ],
-      "update_priority": [
-        {"entity": "user", "status": "Stranger", "new_priority": 2}
-      ]
-    }
-  }
-}
-```
-
-**系统处理逻辑**：
+**只在状态变化时写入事件**：
 
 ```python
-def update_profile(profile_path, state_update):
-    profile = load_json(profile_path)
+async def handle_llm_response(storyline_id, session_id, turn, state_update):
+    if state_update:
+        # 有状态变化，说明发生重要事件
+        event = {
+            "event_id": f"evt_{storyline_id}_{session_id}_{turn}",
+            "storyline_id": storyline_id,
+            "session_id": session_id,
+            "turn": turn,
+            "summary": extract_summary(recent_messages),
+            "state_changes": state_update,
+            "timestamp": now()
+        }
 
-    for field_name, operations in state_update["dynamic_state"].items():
-        # 处理add操作
-        if "add" in operations:
-            for item in operations["add"]:
-                item["timestamp"] = now()
-                profile["dynamic_state"][field_name]["items"].append(item)
+        # 异步写入，不阻塞返回
+        asyncio.create_task(write_event_to_chroma(event))
+```
 
-        # 处理update_priority操作
-        if "update_priority" in operations:
-            for update in operations["update_priority"]:
-                # 查找匹配的item，更新priority
-                pass
+### RAG检索策略
 
-        # 按priority降序排序
-        profile["dynamic_state"][field_name]["items"].sort(
-            key=lambda x: x["priority"],
-            reverse=True
+**关键**：必须过滤 `storyline_id`，避免不同故事线的事件混淆
+
+```python
+async def rag_query_with_timeout(user_input, storyline_id, timeout=1.5):
+    """
+    RAG检索，带超时保护
+    """
+    try:
+        events = await asyncio.wait_for(
+            chroma.query(
+                query_text=user_input,
+                filter={"storyline_id": storyline_id},  # ← 必须过滤
+                n_results=5
+            ),
+            timeout=timeout
         )
-
-    # 原子写回
-    save_json(profile_path, profile)
+        return events
+    except asyncio.TimeoutError:
+        # 超时则不使用RAG，不影响核心功能
+        return []
 ```
 
-### 定时维护任务
-
-**触发条件**：每10轮对话
-
-**操作**：
-1. **去重**：合并相同内容的条目，保留最高优先级
-2. **降级**：超过N天的条目，priority -= 1
-3. **清理**：删除 priority < 3 的条目
+**不使用链表**：
+- 不需要 `previous_event` 字段
+- 信任Chroma的语义检索能力
+- 简化设计，提升性能
 
 ---
 
-## 事件归档机制
+## 性能优化
 
-### 归档触发逻辑
+### 性能瓶颈与解决方案
 
-**后台异步任务**，每次交互后执行
+| 瓶颈 | 原因 | 解决方案 | 效果 |
+|------|------|----------|------|
+| RAG检索慢 | 事件库规模大 | 1. 过滤storyline_id<br>2. 超时保护(1.5s)<br>3. 限制事件库规模(每故事线<1000) | ~500-1500ms |
+| 事件写入阻塞 | Embedding API调用 | 异步写入，不等待完成 | ~0ms（不阻塞） |
+| 多次文件读取 | 串行加载 | 并行加载（asyncio.gather） | 取最慢项 |
+
+### 异步优化
 
 ```python
-async def archive_if_needed(session_id):
-    # 读取最近未归档的消息
-    unarchived = read_unarchived_messages(session_id)
+# 并行执行多个IO操作
+recent, events, state, bg = await asyncio.gather(
+    read_recent_messages(storyline_id, n=20),
+    rag_query_with_timeout(user_input, storyline_id),
+    load_character_state(storyline_id),
+    load_background(background_id)
+)
 
-    # 判断条件
-    if state_update_was_applied:
-        # 有状态变化，必定归档
-        event = extract_event_with_impact(unarchived, state_update)
-        save_to_event_library(event)
-        mark_as_archived(session_id, unarchived)
-
-    elif len(unarchived) >= 10:  # 5轮对话 = 10条消息
-        # 无状态变化，但对话量足够
-        event = extract_event_without_impact(unarchived)
-        save_to_event_library(event)
-        mark_as_archived(session_id, unarchived)
-
-    else:
-        # 继续累积
-        pass
-```
-
-### 归档后的处理
-
-**对话文件**：
-- 标记消息为 `"archived": true`
-- 消息不删除，仍保留在文件中
-- 用于前端显示、导出功能
-
-**Prompt构建**：
-- 读取会话文件时，只取 `"archived": false` 的消息
-- 已归档的消息不再进入Prompt的"Recent Conversation"部分
-- 通过RAG检索，相关事件可能被检索回来（但是事件摘要，不是原文）
-
-**数据流示意**：
-```
-对话历史（未归档）→ Prompt的"Recent Conversation"
-事件日志（已归档）→ Prompt的"Relevant Past Events"（RAG检索）
+# 异步写入事件，不阻塞返回
+asyncio.create_task(write_event_async(...))
 ```
 
 ---
@@ -712,7 +790,7 @@ async def archive_if_needed(session_id):
 
 **数据存储**：
 - 文件系统（JSON/JSONL）
-- Chroma内置SQLite
+- Chroma内置持久化
 
 ### 前端
 
@@ -726,154 +804,31 @@ async def archive_if_needed(session_id):
 
 **状态管理**：
 - Zustand（前端临时状态）
-- 不涉及后端核心逻辑
+- localStorage持久化
 
 **通信**：
 - Socket.IO Client（WebSocket，流式对话）
-- Fetch API（REST，会话/角色/背景管理）
+- Fetch API（REST，故事线/角色/背景管理）
 
 ---
 
-## 待解决问题
+## 核心设计原则总结
 
-### 1. 会话文件的metadata字段
+### ✅ 采用的设计
 
-**问题**：会话文件第一行的metadata具体包含哪些字段？
+1. **故事线架构** - 状态隔离，解决多会话状态污染问题
+2. **三层人格机制** - 静态 + 慢动态 + 快动态，纯定性描述
+3. **事件库过滤** - 必须记录storyline_id和session_id
+4. **定期维护任务** - 每10轮清理、去重、整理状态
+5. **性能优化** - 异步并行、超时保护、~2秒非LLM耗时
 
-**目前假设**：
-```json
-{
-  "type": "metadata",
-  "character_id": "...",
-  "background_id": "...",
-  "title": "...",
-  "created_at": "..."
-}
-```
+### ❌ 删除的设计
 
-**待确认**：
-- 是否需要 `title` 字段（用户自定义会话标题）？
-- 是否需要其他字段？
-
----
-
-### 2. 角色状态的初始化时机
-
-**问题**：`dynamic_profile.json` 何时创建？
-
-**可能性A**：创建角色时
-- 用户在角色管理页创建角色
-- 立即生成 `definition.json` 和 `dynamic_profile.json`
-
-**可能性B**：第一次使用时
-- 用户创建角色时，只生成 `definition.json`
-- 第一次创建会话时，复制 `initial_profile` 到 `dynamic_profile.json`
-
-**待确认**：采用哪种方式？
-
----
-
-### 3. 事件归档是否记录来源会话
-
-**问题**：event_log中的事件，是否需要记录 `source_session_id`？
-
-**不记录的理由**：
-- 事件完全脱离具体角色和会话，更抽象
-- RAG检索只关心语义相似度
-
-**记录的理由**：
-- 调试时可追溯
-- 未来可能需要"删除某个会话的所有事件"
-
-**待确认**：是否记录？
-
----
-
-### 4. 多个会话共享状态的并发问题
-
-**问题**：
-- 用户同时打开两个会话（都使用角色A）
-- 在会话1对话，更新了 `dynamic_profile.json`
-- 切换到会话2，状态已经变了
-- 这是预期行为吗？
-
-**可能的解决方案**：
-- **方案A**：接受这种行为（状态是全局的，本就应该共享）
-- **方案B**：每个会话独立复制状态（但失去了"人格成长"的连续性）
-- **方案C**：前端提示用户"角色状态已更新"
-
-**待确认**：采用哪种方案？
-
----
-
-### 5. Prompt模板的前端管理功能优先级
-
-**问题**：Prompt模板管理是V1.0必需功能，还是后期优化？
-
-**V1.0简化方案**：
-- 使用固定的默认模板
-- 不提供前端管理页面
-
-**完整方案**：
-- 实现 `/prompt-templates` 管理页面
-- 支持模块的增删改查、排序、开关
-
-**待确认**：V1.0包含哪些功能？
-
----
-
-### 6. 定时维护任务的触发机制
-
-**问题**：dynamic_profile的去重/降级/清理任务，如何触发？
-
-**可能方案**：
-- **方案A**：每10轮对话后自动触发
-- **方案B**：后台定时任务（如每天凌晨）
-- **方案C**：手动触发（前端按钮）
-
-**待确认**：采用哪种方案？
-
----
-
-### 7. 角色数量与事件库规模
-
-**问题**：随着使用时间增长，事件库会不断膨胀，是否需要限制？
-
-**可能方案**：
-- **方案A**：不限制，依赖向量数据库的性能
-- **方案B**：设置事件数量上限（如1万条），超过后删除旧事件
-- **方案C**：提供"清理事件库"功能
-
-**待确认**：采用哪种方案？
-
----
-
-## 附录
-
-### 需求来源
-
-本文档基于以下需求：
-- 需求A：PersonaLab V1.0 核心需求与设计规格
-- 需求B：一次完整交互的操作序列
-
-### 修正记录
-
-1. **删除所有量化内容**
-   - 原需求A中包含 `metrics: [{"name": "anger", "value": 9}]`
-   - 已修正为纯定性描述
-
-2. **状态管理改为条目化累加**
-   - 原需求A中是字段级替换
-   - 已修正为优先级队列模式
-
-3. **事件库完全脱离角色**
-   - 原需求B中有 `character_id`, `session_id` 字段
-   - 已删除，改为抽象化的事件模式
-
-4. **会话文件结构明确**
-   - 一个会话一个文件（.jsonl）
-   - 第一行存metadata
-   - 后续行存对话消息
+1. **量化数值** - 不使用priority、intensity、level等数字
+2. **数字降级** - 不使用"每N轮-1"的机制
+3. **事件链表** - 不使用previous_event，纯RAG
+4. **归档机制** - 不使用archived标记，简化设计
+5. **会话摘要** - 不需要session_summary，信任RAG
 
 ---
 
