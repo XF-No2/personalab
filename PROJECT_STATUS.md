@@ -1,7 +1,7 @@
 # PersonaLab 项目当前状态
 
 **最后更新**: 2025-10-15
-**当前版本**: v0.2.0 (架构重新设计完成)
+**当前版本**: v0.3.0 (概要设计完成)
 **状态**: 🟡 设计阶段
 
 > 📌 **重要**：这是项目的"活文档"，记录**当前真实状态**，而非某个发布版本。
@@ -85,7 +85,8 @@ personalab/
 │   └── prompt_templates/
 │
 ├── docs/
-│   ├── DESIGN.md            # 技术设计文档 ✅ v0.2.0
+│   ├── DESIGN_OVERVIEW.md   # 概要设计文档 ✅ v0.3.0
+│   ├── REQUIREMENTS.md      # 需求文档 ✅ v2.2
 │   ├── QUESTIONS.md         # 待解决问题清单 ✅
 │   ├── archive/
 │   └── reports/
@@ -197,6 +198,47 @@ personalab/
 ---
 
 ## 📝 最近调整记录
+
+### 2025-10-15 01:00 - 完成 DESIGN_OVERVIEW.md（概要设计）✅
+
+**重大调整**：
+1. **文档定位调整**
+   - 删除旧的 DESIGN.md（详细设计，1114 行）
+   - 创建新的 DESIGN_OVERVIEW.md（概要设计）
+   - 原因：详细设计修改成本高，频繁修改等于摧毁项目
+   - 策略：只写架构框架和核心流程，不写具体实现
+
+2. **核心架构重新设计**
+   - ❌ 取消 RecallMemoryCache（内存缓存）
+   - ❌ 取消 Core Memory 定期自动更新
+   - ❌ 取消事件定期自动写入
+   - ❌ 取消"最近 30 轮"的限制
+   - ✅ 改为：全量读取对话历史
+   - ✅ 改为：完全手动触发（汇总、更新记忆）
+   - ✅ 新增：汇总功能（独立 LLM Agent，生成多段情节摘要）
+   - ✅ 新增：回退重新生成功能
+
+3. **术语统一**
+   - Recall Memory → 对话历史（Conversation History）
+   - Core Memory → 角色状态（Character State）
+   - Archival Memory → 事件库（Event Library）
+
+4. **设计原则明确**
+   - 单一数据源（避免同步问题）
+   - 完全手动触发（用户控制）
+   - 预留扩展性（摘要格式待定）
+   - 纯定性描述（不用量化数值）
+
+**设计核心变化**：
+- **Recall Memory**: 全量读取所有对话（不限制数量）
+- **汇总功能**: 独立 LLM Agent，Prompt：「请把以下对话按照情节点进行汇总」
+- **汇总结果**: 多段分段的纯文本，每段分别写入 Chroma
+- **新会话初始化**: 汇总摘要 + 最后5轮对话（顺序可配置）
+- **RAG 作用**: 跨多次汇总检索历史事件
+
+**文档归档**：
+- 旧的 DESIGN.md → `docs/archive/v0.2.0/DESIGN_DETAIL.md`
+- 新的 DESIGN_OVERVIEW.md → `docs/DESIGN_OVERVIEW.md`
 
 ### 2025-10-15 00:15 - 修正目录结构错误 ✅
 

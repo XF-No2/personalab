@@ -255,7 +255,7 @@ data/
 
 **关键说明**：
 - `base_persona`：角色的初始人格，永不改变
-- `evolved_persona`：角色的成长人格，每 30 轮或手动触发时更新
+- `evolved_persona`：角色的成长人格，由用户手动触发更新
 - 短期状态（情绪、伤势、目标）直接融入 `evolved_persona` 的自然描述中
 - 不再使用三层结构（core_identity/growth_state/current_state）
 
@@ -312,7 +312,7 @@ data/
 - `instance_id` - **必须**，用于RAG检索时过滤，避免不同实例的事件混淆
 - `session_id` - **必须**，用于追溯和调试
 - `turn` - 会话内的第几轮，用于精确定位
-- `summary` - 事件摘要，由 LLM 在人格维护时生成（每 30 轮）
+- `summary` - 事件摘要，由 LLM 在用户手动触发 Core Memory 更新时生成
 - 不需要 `previous_event`（不使用链表结构，纯RAG）
 
 ---
@@ -336,61 +336,41 @@ PersonaLab 记忆架构
 │   - 写入时机：状态变化时异步写入
 │
 └─ Recall Memory（最近对话历史）
-    - 存储位置：会话文件（.jsonl）+ 内存滑动窗口缓存
+    - 存储位置：会话文件（.jsonl）
     - 加载位置：Prompt 中间 4K-32K 区域
-    - 维护机制：滑动窗口（BASE_RECALL_SIZE + CLEANUP_THRESHOLD）
+    - 维护机制：每次从文件读取最近 30 轮
 ```
 
 ### Recall Memory 维护机制（已确定）
 
-**核心设计**：滑动窗口策略
+**核心设计**：直接从文件读取
 
 ```python
 # 配置参数
-BASE_RECALL_SIZE = 20        # 基础保留轮数（可配置）
-CLEANUP_THRESHOLD = 10       # 清理阈值（可配置）
+RECALL_MEMORY_SIZE = 30  # 固定值：LLM 每次查看最近 30 轮对话
 
-# 运行时缓存
-class RecallMemoryCache:
-    """滑动窗口缓存，维护最近 BASE_RECALL_SIZE + CLEANUP_THRESHOLD 轮对话"""
+def load_recent_messages(session_file: str) -> list:
+    """
+    从 .jsonl 文件读取最近 30 轮对话
+    性能：~50-100ms
 
-    def __init__(self, base_size=20, threshold=10):
-        self.base_size = base_size
-        self.threshold = threshold
-        self.max_size = base_size + threshold  # 30轮
-        self.messages = []  # 滑动窗口
+    如果对话不足 30 轮，返回全部对话
+    """
+    with open(session_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
 
-    def append(self, message):
-        """添加新消息，超过最大容量时自动清理"""
-        self.messages.append(message)
+    # 跳过第一行 metadata
+    messages = [json.loads(line) for line in lines[1:]]
 
-        # 如果超过最大容量（30轮 = 60条消息，user+assistant）
-        if len(self.messages) > self.max_size * 2:
-            # 删除最早的 threshold 轮（10轮 = 20条消息）
-            self.messages = self.messages[self.threshold * 2:]
-
-    def get_for_prompt(self):
-        """获取用于 Prompt 的消息"""
-        return self.messages
-```
-
-**维护流程**：
-
-```
-第1轮：  缓存中有 1轮  （第1轮）
-第20轮： 缓存中有 20轮 （第1-20轮） ← 达到基础容量
-第30轮： 缓存中有 30轮 （第1-30轮） ← 达到最大容量
-第31轮： 缓存中有 21轮 （第11-31轮）← 自动清理了前10轮
-第40轮： 缓存中有 30轮 （第11-40轮）← 再次达到最大容量
-第41轮： 缓存中有 21轮 （第21-41轮）← 再次清理前10轮
-...循环往复
+    # 返回最近 30 轮（30 轮 = 60 条消息，user + assistant）
+    return messages[-60:] if len(messages) > 60 else messages
 ```
 
 **关键点**：
 - 会话文件（.jsonl）永久保留所有对话，不物理删除
-- 内存缓存维护滑动窗口，自动清理旧消息
-- 组装 Prompt 时直接从缓存读取，O(1) 性能
-- 服务重启时从文件重建缓存（只需读最近 30 轮）
+- 每次从文件读取最近 30 轮（性能损失 ~50-100ms，可接受）
+- 支持"回退重新生成"功能（单一数据源，不会出现数据不一致）
+- LLM 只需要看最近 30 轮作为对话上下文，更早的对话通过 RAG 检索访问
 
 ---
 
@@ -398,7 +378,7 @@ class RecallMemoryCache:
 
 ### 设计方案
 
-PersonaLab 不使用 Letta 的 AI Agent 自管理机制（function calling），而是采用**系统定期更新**的方式。
+PersonaLab 不使用 Letta 的 AI Agent 自管理机制（function calling），而是采用**完全手动触发**的方式。
 
 ### 核心概念
 
@@ -408,7 +388,7 @@ Core Memory = 初始人格（base_persona）+ 成长人格（evolved_persona）
 ```
 
 - **初始人格（base_persona）**：角色的底色，永不改变
-- **成长人格（evolved_persona）**：随着对话经历而变化，定期更新
+- **成长人格（evolved_persona）**：随着对话经历而变化，由用户手动触发更新
 
 **展示给 AI 的完整人格**：
 ```
@@ -429,65 +409,60 @@ Core Memory = 初始人格（base_persona）+ 成长人格（evolved_persona）
 
 #### 触发时机
 
-1. **定期触发**：Recall Memory 清理缓存时同步执行
-   - 当 Recall Memory 达到清理阈值（30 轮）
-   - 在第 31、41、51... 轮追加消息时触发
-   - 调用 1 次 LLM 更新 `evolved_persona`
-
-2. **手动触发**：用户点击"🧠 更新人格"按钮
-   - 立即调用 LLM 更新 `evolved_persona`
-   - 不等待定期触发时机
+**完全手动触发**：用户点击"🧠 更新记忆"按钮
+- 立即调用 LLM 更新 `evolved_persona`
+- 用户完全控制更新时机
+- 同步执行，显示加载状态（约 5-10 秒）
 
 #### 实现架构
 
 ```python
-class RecallMemoryCache:
-    """Recall Memory 缓存管理"""
+@router.post("/maintenance/core-memory")
+async def trigger_core_memory_update(instance_id: str):
+    """
+    手动触发 Core Memory 更新
+    用户点击"🧠 更新记忆"按钮时调用
+    """
+    # 1. 加载当前角色状态
+    state = load_character_state(instance_id)
 
-    def cleanup(self):
-        """清理缓存（删除最早的 threshold 轮）"""
-        self.messages = self.messages[self.threshold * 2:]
+    # 2. 加载最近 30 轮对话
+    recent_messages = load_recent_messages(session_file)
 
+    # 3. 调用 LLM 更新 evolved_persona
+    new_evolved_persona = await llm_update_persona(
+        base_persona=state['base_persona'],
+        old_evolved_persona=state['evolved_persona'],
+        recent_messages=recent_messages
+    )
 
-class EvolvedPersonaUpdater:
-    """成长人格更新器"""
+    # 4. 保存新的 evolved_persona
+    state['evolved_persona'] = new_evolved_persona
+    state['last_maintenance_turn'] = current_turn
+    save_character_state(instance_id, state)
 
-    async def update(self, recent_conversations):
-        """更新 evolved_persona"""
-        # 调用 LLM，生成新的成长人格描述
-        # 保存到 character_state.json
+    # 5. 同时生成并写入事件摘要
+    event_summary = await llm_generate_event_summary(recent_messages)
+    await write_event_to_chroma(event_summary, instance_id)
 
-
-class MaintenanceScheduler:
-    """定期维护任务调度器"""
-
-    def check_and_execute(self):
-        """检查并执行维护任务"""
-        if self.recall_cache.needs_cleanup():
-            # 任务1：清理 Recall Memory 缓存
-            self.recall_cache.cleanup()
-
-            # 任务2：更新成长人格
-            asyncio.create_task(self.persona_updater.update(...))
+    return {"success": True, "updated_persona": new_evolved_persona}
 ```
 
 ### 更新流程
 
 ```
-第 31 轮消息追加：
+用户点击"🧠 更新记忆"按钮
   ↓
-MaintenanceScheduler 检测到需要清理
+前端显示加载状态
   ↓
-并行执行两个任务：
-  ├─ 任务1：RecallMemoryCache.cleanup()
-  │         删除最早的 10 轮对话
-  │
-  └─ 任务2：EvolvedPersonaUpdater.update()
-            ├─ 输入：base_persona + evolved_persona + 最近对话
-            ├─ LLM 生成新的 evolved_persona
-            └─ 保存到 character_state.json
+后端执行：
+  ├─ 加载当前角色状态
+  ├─ 加载最近 30 轮对话
+  ├─ 调用 LLM 更新 evolved_persona (~5-10秒)
+  ├─ 保存新的 evolved_persona
+  └─ 生成事件摘要并写入 Chroma
   ↓
-第 31 轮对话继续处理（不阻塞）
+返回前端，显示"更新完成"
 ```
 
 ### Prompt 组装
@@ -501,7 +476,7 @@ MaintenanceScheduler 检测到需要清理
 {evolved_persona}
 
 ## Recent Context ##
-{最近 20-30 轮对话}
+{最近 30 轮对话}
 ---
 
 注意：Base Identity 是角色的本质底色，永不改变。
@@ -511,11 +486,11 @@ Evolved State 是角色经历成长后的状态。
 
 ### 关键特点
 
-1. **简单明了**：只有两个字段，逻辑清晰
-2. **成本可控**：每 30 轮调用 1 次 LLM（与 Recall Memory 清理同步）
-3. **不依赖 AI 判断**：系统定期触发，不需要 AI 每轮判断是否更新
-4. **用户可控**：提供手动触发按钮，用户可随时更新
-5. **异步执行**：更新任务不阻塞对话流程
+1. **简单明了**：只有两个字段（base_persona + evolved_persona），逻辑清晰
+2. **完全手动触发**：由用户决定何时更新，不自动触发
+3. **成本可控**：只在用户需要时调用 LLM，节省成本
+4. **用户可控**：用户完全控制人格更新时机，符合预期
+5. **支持回退功能**：不会出现"回退对话后人格状态不一致"的问题
 
 ---
 
@@ -533,18 +508,17 @@ Evolved State 是角色经历成长后的状态。
 ```
 用户输入："你还记得我说的话吗？"
   ↓
-[1] 追加消息到会话文件 + 缓存 (~50ms)
+[1] 追加消息到会话文件 (~50ms)
   append_to_file("instances/{instance_id}/sessions/{session_id}.jsonl", user_message)
-  recall_cache.append(user_message)
   ↓
 [2] 并行加载数据（总耗时取最慢的）
   await asyncio.gather(
     rag_query_with_timeout(user_input, instance_id),  # ~500-1500ms
     load_character_state(instance_id),                # ~50ms (包含 base_persona + evolved_persona)
-    load_background(background_id)                    # ~50ms
+    load_background(background_id),                   # ~50ms
+    load_recent_messages(session_file)                # ~50-100ms (从文件读取最近 30 轮)
   )
-  recent_messages = recall_cache.get_for_prompt()     # ~0ms (从内存缓存读取)
-  并行耗时：max(1500, 50, 50) = ~1500ms
+  并行耗时：max(1500, 50, 50, 100) = ~1500ms
   ↓
 [3] 组装Prompt (~100ms)
   prompt = build_prompt(
@@ -564,35 +538,22 @@ Evolved State 是角色经历成长后的状态。
   narrative = extract_narrative(response)
   # AI 只返回叙事内容，不返回状态更新
   ↓
-[6] 追加AI回复到会话文件 + 缓存 (~50ms)
+[6] 追加AI回复到会话文件 (~50ms)
   append_to_file("sessions/{session_id}.jsonl", assistant_message)
-  recall_cache.append(assistant_message)
   ↓
-[7] 检查并执行维护任务 (~50ms 检查，维护任务异步执行)
-  maintenance_scheduler.check_and_execute()
-
-  如果 recall_cache.needs_cleanup():
-    ├─ 同步执行：recall_cache.cleanup()  (~10ms)
-    └─ 异步执行：asyncio.create_task(
-          persona_updater.update(recent_messages)  # ~5-10秒 LLM 调用
-       )
-  ↓
-[8] 返回前端
+[7] 返回前端
   websocket.send({"type": "done"})
 
-总计（非LLM）：~1.65秒 ✅
-
-维护任务（第 31、41、51... 轮触发）：
-- 清理缓存：同步执行，~10ms
-- 更新人格：异步执行，~5-10秒（不阻塞对话）
+总计（非LLM）：~1.75秒 ✅ (比原设计增加 ~100ms，可接受)
 ```
 
 ### 关键变化
 
-1. **使用 RecallMemoryCache**：从内存缓存读取对话，不再每次从文件读取
-2. **AI 只返回叙事**：不再有 `state_update`，Core Memory 由定期维护任务更新
-3. **维护任务整合**：清理缓存 + 更新人格，在同一个时机触发
-4. **异步更新人格**：不阻塞对话流程，下一轮使用新的 evolved_persona
+1. **取消内存缓存**：每次从文件读取最近 30 轮对话（性能损失 ~100ms，可接受）
+2. **单一数据源**：只维护 .jsonl 文件，支持"回退重新生成"功能
+3. **取消定期维护**：Core Memory 完全由用户手动触发更新
+4. **AI 只返回叙事**：不再有 `state_update`，简化设计
+5. **简化流程**：删除维护任务调度器，流程更清晰
 
 ---
 
