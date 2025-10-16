@@ -1,7 +1,7 @@
 # PersonaLab 概要设计文档
 
 **文档类型**: 概要设计（Architecture Overview）
-**版本**: v0.3.3
+**版本**: v0.3.4
 **最后更新**: 2025-10-16
 **状态**: 🟡 设计中
 
@@ -363,10 +363,14 @@ RAG 搜索 Summaries Collection
 ```json
 {
   "base_persona": "角色的初始人格，永不改变",
-  "evolved_persona": "角色经历成长后的状态，手动更新",
-  "last_maintenance_turn": 150
+  "evolved_persona": "角色经历成长后的状态，手动更新"
 }
 ```
+
+**初始化**：
+- 创建会话实例时，从全局角色定义复制 `base_persona`
+- `evolved_persona` 初始为空字符串（角色尚未成长）
+- 用户手动触发"更新记忆"后，`evolved_persona` 才有内容
 
 ### 两层人格
 
@@ -441,10 +445,15 @@ data/
 {"type":"metadata","instance_id":"inst_001","session_id":"sess_002","created_at":"...","continued_from":"sess_001"}
 {"type":"summary","content":"情报交换与信任建立。用户告知 Alserqi 北区据点有背叛者的情报..."}
 {"type":"summary","content":"制定复仇计划。Alserqi 决定前往调查，制定了详细的潜入计划..."}
-{"role":"user","content":"（旧会话第46轮）你确定这个计划可行吗？","turn":1,"timestamp":"..."}
-{"role":"assistant","content":"（旧会话第46轮）当然，我已经...","turn":1,"timestamp":"..."}
-{"role":"user","content":"（新会话第51轮）那我们现在出发？","turn":6,"timestamp":"..."}
+{"role":"user","content":"你确定这个计划可行吗？","turn":1,"timestamp":"..."}
+{"role":"assistant","content":"当然，我已经考虑了所有可能的风险...","turn":1,"timestamp":"..."}
+{"role":"user","content":"那我们现在出发？","turn":6,"timestamp":"..."}
 ```
+
+**说明**：
+- 新会话的前几条消息是从旧会话复制的最后5轮对话
+- `turn` 字段重新编号（从 1 开始）
+- 消息内容是纯净的对话，不包含任何元信息注释
 
 **消息类型定义**：
 - `type:"metadata"` - 会话元数据（每个会话文件第一行）
@@ -471,7 +480,7 @@ data/
     "order": "summary_first",  // 或 "last_5_first"
     "last_n_turns": 5
   },
-  "recall_memory": {
+  "conversation_file": {
     "load_all": true,
     "max_tokens": 100000
   },
@@ -489,7 +498,7 @@ data/
 ### 单一数据源原则
 - 只维护 .jsonl 文件，不维护内存缓存
 - 避免数据同步问题
-- 支持回退功能
+- 支持会话编辑功能（用户可自由编辑对话历史）
 
 ### 完全手动触发原则
 - 汇总功能：用户主动触发
@@ -555,7 +564,7 @@ data/
 
 ---
 
-**文档版本**: v0.3.3
+**文档版本**: v0.3.4
 **创建日期**: 2025-10-15
 **最后更新**: 2025-10-16
 **文档类型**: 概要设计（不含详细实现）
@@ -563,6 +572,16 @@ data/
 ---
 
 ## 变更记录
+
+### v0.3.4 (2025-10-16)
+- 🔧 **修复术语**：配置系统 `recall_memory` → `conversation_file`
+- 📝 **补充初始化**：明确角色状态创建时的初始化流程
+  - `base_persona` 从全局角色定义复制
+  - `evolved_persona` 初始为空字符串
+  - 删除无用的 `last_maintenance_turn` 字段
+- 📝 **修正描述**："支持回退功能" → "支持会话编辑功能"
+- 📝 **清理示例**：删除会话文件示例中的元信息注释，补充说明
+- 📝 **修正变更记录**：标注 v0.3.2 中错误添加的回退约束
 
 ### v0.3.3 (2025-10-16)
 - 🗑️ **删除无用设计**：删除会话文件的 `status` 字段（完全没必要）
@@ -580,8 +599,8 @@ data/
 - 🔧 **修复逻辑冲突**：明确更新记忆不写入 Chroma（避免与汇总功能重复写入）
 - 📝 **补充文档**：会话文件格式新增 `type:"summary"` 消息类型定义
 - 📝 **明确 RAG 范围**：只检索已汇总会话，当前活跃会话不走 RAG
-- 🔒 **新增约束**：回退功能只对 status:"active" 的会话有效
 - 📝 **优化描述**：导演模块跨实例检索标注为"可选"，明确语义
+- ⚠️ 注：本版本错误地添加了回退约束（已在 v0.3.3 删除）
 
 ### v0.3.1 (2025-10-15 01:30)
 - 新增：汇总功能的分层摘要设计（摘要 + 详细素材）
