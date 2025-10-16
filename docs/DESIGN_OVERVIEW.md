@@ -1,7 +1,7 @@
 # PersonaLab 概要设计文档
 
 **文档类型**: 概要设计（Architecture Overview）
-**版本**: v0.5.0
+**版本**: v0.6.0
 **最后更新**: 2025-10-16
 **状态**: 🟡 设计中
 
@@ -42,51 +42,62 @@ PersonaLab（人格实验室）是一个 **AI 角色对话平台**，支持长�
 
 ## 2. 核心架构
 
-### 2.1 数据架构（三层）
+### 2.1 对话文件中心 + 预设引用
+
+**架构概念**：
+
+```
+PersonaLab 架构
+├─ 对话文件（Conversation）← 核心数据
+│   - 存储对话历史（conversation.jsonl）
+│   - 角色快照（character_snapshot.json，会成长）
+│   - 剧情进度（plot_state.json，可选）
+│   - 元数据（metadata.json，记录使用的预设）
+│
+├─ 预设库（Presets）← 可复用模块
+│   - 角色预设（characters/*.json）
+│   - 背景预设（backgrounds/*.json）
+│   - 摘要预设（summaries/*.json）
+│
+└─ 事件库（Event Library）← RAG检索
+    - Chroma 向量数据库
+    - 存储汇总生成的分层摘要
+```
+
+**关键设计**：
+- **对话文件是核心**：存储真实对话历史和独立演化的状态
+- **预设是模板**：可复用的 Prompt 模块（角色、背景等）
+- **创建对话时复制快照**：从预设复制角色人格，后续独立演化
+- **RAG检索基于对话**：V1.0 只检索当前对话的历史（简单实现）
+
+---
+
+### 2.2 数据架构（三层）
 
 ```
 PersonaLab 数据架构
-├─ 角色状态（Character State）
-│   - 存储：character_state.json
+├─ 角色快照（Character Snapshot）
+│   - 存储：character_snapshot.json（每个对话独立）
 │   - 内容：base_persona（初始人格）+ evolved_persona（成长人格）
 │   - 更新：用户手动触发（"🧠 更新记忆"按钮）
 │   - 详细设计：见 persona.md
 │
 ├─ 事件库（Event Library）
-│   - 存储：Chroma 向量数据库（分两个 Collection）
+│   - 存储：Chroma 向量数据库
 │   - 内容：分层摘要（Hierarchical Summary）的情节数据
 │       ├─ Summaries Collection：情节点摘要
-│       └─ Plots Collection：详细剧情素材
-│   - 作用：RAG 检索历史事件（支持深度搜索）
+│       └─ Plots Collection：详细剧情素材（V1.0预留，暂不实现）
+│   - 作用：RAG 检索历史事件
 │   - 写入：汇总时生成并写入
 │   - 详细设计：见 rag.md
 │
-└─ 会话文件（Conversation File）
-    - 存储：.jsonl 文件（当前会话）
+└─ 对话文件（Conversation File）
+    - 存储：conversation.jsonl
     - 内容：用户和 AI 的完整对话记录
     - 读取：每次全量读取所有对话
-    - 汇总：汇总后关闭旧会话，开启新会话
+    - 汇总：汇总后创建新对话，引用旧对话的摘要
     - 详细格式：见 data_structure.md
 ```
-
-### 2.2 会话实例架构
-
-**核心概念**：会话实例是状态隔离容器
-
-```
-角色定义（全局）
-  └─ 会话实例 1
-      ├─ 角色状态（独立）
-      └─ 多个会话
-          ├─ session_001（已汇总）
-          ├─ session_002（已汇总）
-          └─ session_003（当前活跃）
-```
-
-**关键点**：
-- 同一角色可以创建多个会话实例（不同剧情线）
-- 每个会话实例的角色状态完全独立
-- 一个会话实例内可以有多个会话（通过汇总功能延续）
 
 ---
 
@@ -97,25 +108,26 @@ PersonaLab 数据架构
 ```
 用户输入
   ↓
-[1] 追加到会话文件
+[1] 追加到对话文件（conversation.jsonl）
   ↓
 [2] 并行加载数据
-  - RAG 检索已汇总的历史会话事件（Chroma，只查当前 instance_id）
-  - 加载角色状态（base_persona + evolved_persona）
-  - 加载背景设定
-  - 全量读取当前会话对话历史（.jsonl 文件）
+  - RAG 检索已汇总的历史事件（Chroma，V1.0只查当前对话）
+  - 加载角色快照（character_snapshot.json）
+  - 加载背景预设（通过 metadata.json 引用）
+  - 加载摘要预设（通过 metadata.json 引用）
+  - 全量读取当前对话历史（conversation.jsonl）
   ↓
 [3] 组装 Prompt（详见 3.5 节）
   ↓
 [4] 调用 LLM（流式输出）
   ↓
-[5] 追加 AI 回复到会话文件
+[5] 追加 AI 回复到对话文件
   ↓
 [6] 返回前端
 ```
 
 **设计原则**：
-- ✅ 单一数据源（只维护 .jsonl 文件）
+- ✅ 单一数据源（只维护 conversation.jsonl）
 - ✅ 全量读取对话历史（不限制数量）
 - ✅ 无自动维护任务（不自动更新人格、不自动汇总）
 
@@ -128,34 +140,36 @@ PersonaLab 数据架构
 ```
 汇总功能流程
   ↓
-[1] 全量读取当前会话所有对话
+[1] 全量读取当前对话所有对话
   ↓
-[2] 调用汇总 Agent（一次 LLM 调用，生成分层摘要）
+[2] 调用汇总 Agent（一次 LLM 调用，生成摘要）
   输出 JSON 格式：
     [
-      {"summary": "情节点摘要", "details": "详细剧情素材"}
+      {"summary": "情节点摘要"}
     ]
   ↓
 [3] 解析 JSON（严格模式）
   - 解析成功 → 继续
   - 解析失败 → 报错，提示用户重试
   ↓
-[4] 写入 Chroma（分层摘要）
-  - Summaries Collection：存储摘要
-  - Plots Collection：存储详细素材
-  - 通过 ID 关联
+[4] 写入 Chroma（Summaries Collection）
+  - 记录 conversation_id, character_preset, background_preset 等元数据
   ↓
-[5] 创建新会话
-  - 初始化内容：当前会话的所有 Summaries + 最后5轮对话
+[5] 生成摘要预设（presets/summaries/{summary_id}.json）
   ↓
-[6] 返回前端，自动切换到新会话
+[6] 创建新对话
+  - 从当前对话复制角色快照
+  - metadata.json 引用新生成的摘要预设
+  - 初始化 conversation.jsonl：摘要 + 最后5轮对话
+  ↓
+[7] 返回前端，提示用户切换到新对话
 ```
 
 **关键设计**：
-- **分层摘要**：一次 LLM 调用生成两层数据（Summaries + Plots）
+- **分层摘要**：V1.0 只生成 Summaries，Plots 预留扩展
 - **严格解析**：JSON 格式输出，解析失败直接报错
-- **分层存储**：摘要和素材分别存入 Chroma 的不同 Collection
-- **剧情延续**：新会话包含摘要 + 最后5轮对话，保持剧情连贯性
+- **摘要预设化**：摘要保存为预设，可被其他对话引用
+- **剧情延续**：新对话包含摘要 + 最后5轮对话，保持连贯性
 
 **详细设计**：见 [rag.md](design/rag.md) 第2节"深度搜索策略"
 
@@ -168,28 +182,28 @@ PersonaLab 数据架构
 ```
 更新记忆流程
   ↓
-[1] 加载当前角色状态
+[1] 加载当前对话的角色快照（character_snapshot.json）
   ↓
-[2] 全量读取当前会话对话
+[2] 全量读取当前对话历史（conversation.jsonl）
   ↓
 [3] 调用 LLM 更新 evolved_persona
   - 输入: base_persona + old_evolved_persona + 对话历史
   - 输出: new_evolved_persona
   ↓
-[4] 保存新的 evolved_persona 到 character_state.json
+[4] 保存新的 evolved_persona 到 character_snapshot.json
   ↓
 [5] 返回前端
 ```
 
 **与汇总功能的区别**：
-- **汇总功能**: 总结对话内容，生成分层摘要写入 Chroma，创建新会话延续剧情
-- **更新记忆**: 更新角色人格状态（evolved_persona），只修改 character_state.json
+- **汇总功能**: 总结对话内容，生成摘要写入 Chroma，创建新对话
+- **更新记忆**: 更新角色人格状态（evolved_persona），只修改 character_snapshot.json
 
 **详细设计**：见 [persona.md](design/persona.md) 第4节"更新记忆流程"
 
 ---
 
-### 3.4 会话编辑功能（Prompt 编辑器）
+### 3.4 对话编辑功能（Prompt 编辑器）
 
 **核心理念**：
 - 对话界面本质上是一个 **Prompt 编辑器**
@@ -207,18 +221,18 @@ PersonaLab 数据架构
   ↓
 [1] 前端发送编辑后的消息列表
   ↓
-[2] 后端重写会话文件（覆盖旧内容）
+[2] 后端重写对话文件（覆盖旧内容）
   ↓
-[3] 读取新的会话内容
+[3] 读取新的对话内容
   ↓
 [4] 基于现有消息生成 AI 回复
   ↓
-[5] 追加新回复到会话文件
+[5] 追加新回复到对话文件
 ```
 
 **设计原则**：
-- 无任何限制：用户可以编辑任意会话文件的任意消息
-- 单一数据源：只需修改 .jsonl 文件
+- 无任何限制：用户可以编辑任意对话文件的任意消息
+- 单一数据源：只需修改 conversation.jsonl
 - 简单直接：不需要状态检查、不需要缓存同步
 
 ---
@@ -237,11 +251,11 @@ PersonaLab 数据架构
 
 **中间4K-32K**（中等权重）：
 - 背景世界设定
-- 当前会话完整对话历史
+- 引用的摘要预设（历史剧情概要）
+- 当前对话完整对话历史
 
 **32K+区域**（能看到事实，语义分析能力弱）：
 - 日常对话RAG检索的历史事件
-- 导演模块RAG拉回的剧情事件
 
 **尾部4K**（高权重）：
 - 用户最新输入
@@ -275,7 +289,7 @@ AI 输出 `[PROGRESS:X:status]` 标记，后端正则扫描提取并更新状态
 
 #### 4.3 容错处理（RAG兜底）
 
-当 AI 连续3次没有推进剧情时，用 RAG 检索提醒 AI（分层检索：当前实例15条 + 其他实例5条）
+当 AI 连续3次没有推进剧情时，用 RAG 检索提醒 AI
 
 **详细设计**：见 [director.md](design/director.md)
 
@@ -290,19 +304,14 @@ AI 输出 `[PROGRESS:X:status]` 标记，后端正则扫描提取并更新状态
 **触发时机**：每次用户输入时
 
 **检索流程**：
-1. 使用LLM重新表述查询
+1. 使用用户输入作为查询（V1.0 跳过LLM重新表述，简化实现）
 2. 语义检索（Chroma）
 3. 注入到Prompt的32K+区域
 
 **关键特性**：
 - 语义检索（不需要精确匹配关键词）
-- 实例隔离（只检索当前instance_id）
-- 检索范围（只检索已汇总的会话事件）
-
-### 5.2 深度搜索策略（分层摘要）
-
-- **浅层搜索**：只返回 Summaries（摘要）
-- **深度搜索**：通过 related_plot_id 展开 Plots（详细素材）
+- **V1.0 简化实现**：只检索当前对话（基于 conversation_id 过滤）
+- **V2.0+ 扩展**：可基于标签进行语义检索（字段已预留）
 
 **详细设计**：见 [rag.md](design/rag.md)
 
@@ -328,7 +337,7 @@ AI 输出 `[PROGRESS:X:status]` 标记，后端正则扫描提取并更新状态
 {evolved_persona}
 
 ## Recent Context ##
-{当前会话的全部对话}
+{当前对话的全部对话}
 ---
 ```
 
@@ -342,14 +351,17 @@ AI 输出 `[PROGRESS:X:status]` 标记，后端正则扫描提取并更新状态
 
 ```
 data/
-├── config.json              # 全局配置文件（功能开关、参数设置）
-├── characters/              # 角色库（全局）
-├── backgrounds/             # 背景库（全局）
-├── instances/               # 会话实例（核心）
-│   └── {instance_id}/
-│       ├── instance_state.json
-│       ├── character_state.json
-│       └── sessions/
+├── config.json              # 全局配置文件
+├── presets/                 # 预设库
+│   ├── characters/
+│   ├── backgrounds/
+│   └── summaries/
+├── conversations/           # 对话文件（核心）
+│   └── {conversation_id}/
+│       ├── conversation.jsonl
+│       ├── metadata.json
+│       ├── character_snapshot.json
+│       └── plot_state.json
 ├── event_library/           # 事件库（Chroma向量数据库）
 └── prompt_templates/        # Prompt 模板（可配置）
 ```
@@ -388,9 +400,9 @@ data/
 ## 9. 核心设计原则
 
 ### 单一数据源原则
-- 只维护 .jsonl 文件，不维护内存缓存
+- 只维护 conversation.jsonl，不维护内存缓存
 - 避免数据同步问题
-- 支持会话编辑功能（用户可自由编辑对话历史）
+- 支持对话编辑功能（用户可自由编辑对话历史）
 
 ### 完全手动触发原则
 - 汇总功能：用户主动触发
@@ -398,7 +410,7 @@ data/
 - 不自动维护，用户完全控制
 
 ### 预留扩展性原则
-- 汇总摘要格式待定，预留扩展字段
+- RAG检索范围预留扩展（V1.0基于conversation_id，V2.0+支持标签）
 - Prompt 模板可配置
 - 配置系统支持运行时调整
 
@@ -413,21 +425,19 @@ data/
 
 ### 已确定
 
-1. ✅ **取消 RecallMemoryCache**（内存缓存）→ 全量读取对话
-2. ✅ **取消定期自动维护**（Core Memory、事件写入）→ 完全手动触发
-3. ✅ **取消滑动窗口机制** → 不限制对话数量
-4. ✅ **汇总功能**：独立 LLM Agent，一次调用生成分层摘要
-5. ✅ **分层摘要存储**：
-   - Summaries Collection（摘要）：情节点概括，用于延续历史
-   - Plots Collection（详细素材）：剧情过程，可复用的剧情设计
-   - Chroma 分两个 Collection 存储，通过 ID 关联
-6. ✅ **RAG 深度搜索**：支持浅层（只查 Summaries）和深度（展开 Plots）
-7. ✅ **严格解析**：JSON 格式输出，解析失败报错，不降级
-8. ✅ **会话编辑**：用户可以编辑/删除任意消息，自由操作对话历史
+1. ✅ **对话文件中心架构** - 对话文件 + 预设引用，灵活复用
+2. ✅ **角色快照机制** - 每个对话拥有独立的角色快照，独立演化
+3. ✅ **简化RAG检索** - V1.0基于conversation_id，预留标签扩展（V2.0+）
+4. ✅ **取消内存缓存** - 全量读取对话，避免同步问题
+5. ✅ **完全手动触发** - 汇总、更新记忆由用户主动触发
+6. ✅ **汇总功能** - 独立 LLM Agent，一次调用生成摘要
+7. ✅ **摘要预设化** - 摘要保存为预设，可被其他对话引用
+8. ✅ **严格解析** - JSON 格式输出，解析失败报错
+9. ✅ **对话编辑** - 用户可以编辑/删除任意消息，自由操作对话历史
 
 ### 待确定
 
-1. ⏳ 深度搜索的触发策略（关键词检测 vs 自动判断）
+1. ⏳ 深度搜索的触发策略（V1.0暂不实现，预留Plots Collection）
 2. ⏳ Prompt 模板的详细设计
 3. ⏳ 导演模块"拉回主线"的具体策略
 4. ⏳ 性能优化的具体措施
@@ -456,7 +466,7 @@ data/
 
 ---
 
-**文档版本**: v0.5.0
+**文档版本**: v0.6.0
 **创建日期**: 2025-10-15
 **最后更新**: 2025-10-16
 **文档类型**: 概要设计（不含详细实现）
@@ -464,6 +474,13 @@ data/
 ---
 
 ## 变更记录
+
+### v0.6.0 (2025-10-16)
+- 🔄 **架构重构**：从"会话实例"改为"对话文件 + 预设引用"
+- ❌ **删除**：会话实例架构（instance）相关内容
+- 🆕 **新增**：对话文件中心架构（conversation + presets）
+- 📝 **简化**：RAG检索基于conversation_id（V1.0），预留标签扩展（V2.0+）
+- 📝 **摘要预设化**：汇总生成的摘要保存为预设，可被其他对话引用
 
 ### v0.5.0 (2025-10-16)
 - 🔄 **模块化重构**：将详细设计拆分到 docs/design/ 目录
@@ -477,7 +494,7 @@ data/
 ### v0.4.0 (2025-10-16)
 - 🆕 **新增章节**：补充"日常对话RAG检索（Conversational RAG）"（第5.1章）
 - 🆕 **新增章节**：补充"Prompt组装策略"（第3.5章）
-- ✏️ **修正表述**：汇总功能"所有Summaries"明确为"当前会话的所有Summaries"
+- ✏️ **修正表述**：汇总功能"所有Summaries"明确为"当前对话的所有Summaries"
 - ✏️ **删除冗余**：删除重复的"5.2 RAG检索范围"章节
 - 📎 **需求追溯**：为第3.5、4、5、6章添加需求追溯链接
 
@@ -491,7 +508,7 @@ data/
 
 ### v0.3.3 (2025-10-16)
 - 🗑️ **删除无用设计**：删除会话文件的 `status` 字段
-- 🔄 **重新设计会话编辑**：改为 Prompt 编辑器理念
+- 🔄 **重新设计对话编辑**：改为 Prompt 编辑器理念
 
 ### v0.3.2 (2025-10-16)
 - 🔧 **术语统一**："父子结构" → "分层摘要（Hierarchical Summary）"

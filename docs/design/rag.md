@@ -35,7 +35,7 @@
   - 输出：独立的查询语句（例如："据点冲突事件，涉及主角与某人的对抗"）
   ↓
 [2] 语义检索（Chroma）
-  - 检索当前instance_id的历史事件
+  - 检索当前conversation_id的历史事件
   - 返回20条相关事件（Summaries为主）
   ↓
 [3] 注入到Prompt的32K+区域
@@ -49,7 +49,7 @@
 - 基于向量相似度，能理解同义表达
 
 **实例隔离**：
-- 只检索当前`instance_id`的事件
+- 只检索当前`conversation_id`的事件
 - 严格隔离不同剧情线，避免混淆
 
 **检索范围**：
@@ -126,7 +126,7 @@ RAG 搜索 Summaries Collection
 | `content` | string | 情节点摘要文本 |
 | `metadata.related_plot_id` | string | 关联的详细素材ID（`plot_{session_id}_{index}`） |
 | `metadata.session_id` | string | 所属会话ID |
-| `metadata.instance_id` | string | 所属会话实例ID |
+| `metadata.conversation_id` | string | 所属对话ID |
 | `metadata.character_id` | string | 角色ID |
 | `metadata.background_id` | string | 背景ID |
 
@@ -138,7 +138,7 @@ RAG 搜索 Summaries Collection
 | `content` | string | 详细剧情素材文本 |
 | `metadata.related_summary_id` | string | 关联的摘要ID（`summary_{session_id}_{index}`） |
 | `metadata.session_id` | string | 所属会话ID |
-| `metadata.instance_id` | string | 所属会话实例ID |
+| `metadata.conversation_id` | string | 所属对话ID |
 | `metadata.character_id` | string | 角色ID |
 | `metadata.background_id` | string | 背景ID |
 
@@ -165,7 +165,7 @@ RAG 搜索 Summaries Collection
 chroma_collection.query(
     query_embeddings=embed(reformulated_query),
     where={
-        "instance_id": current_instance,
+        "conversation_id": current_instance,
         "character_id": current_character,
         "background_id": current_background
     },

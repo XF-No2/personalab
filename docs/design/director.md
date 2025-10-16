@@ -74,7 +74,7 @@ AI生成回复
   ↓
 [2] 如果找到标记：
    - 解析 plot_index 和 status
-   - 更新 instance_state.json 中的 plot_state
+   - 更新 plot_state.json
      * current_plot_index = plot_index
      * current_status = status
      * no_update_count = 0 (清零)
@@ -130,7 +130,7 @@ query = f"故事大纲第{current_plot}点：{plot_content}"
 events_current = chroma_collection.query(
     query_embeddings=embed(query),
     where={
-        "instance_id": current_instance,
+        "conversation_id": current_instance,
         "character_id": current_character,
         "background_id": current_background
     },
@@ -142,7 +142,7 @@ events_others = chroma_collection.query(
     query_embeddings=embed(query),
     where={
         "$and": [
-            {"instance_id": {"$ne": current_instance}},
+            {"conversation_id": {"$ne": current_instance}},
             {"character_id": current_character},
             {"background_id": current_background}
         ]
@@ -198,12 +198,13 @@ events_others = chroma_collection.query(
 
 ## 数据结构依赖
 
-### instance_state.json 中的 plot_state 字段
+### plot_state.json 文件
 
-格式定义：见 [data_structure.md](data_structure.md#会话实例状态格式instance_statejson)
+格式定义：见 [data_structure.md](data_structure.md#plot_statejson剧情进度可选)
 
 ```json
-"plot_state": {
+{
+  "enabled": true,
   "current_plot_index": 3,
   "current_status": "in_progress",
   "no_update_count": 2

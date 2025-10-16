@@ -1,8 +1,8 @@
 # PersonaLab 系统运作机制验证
 
 **文档类型**: 系统流程验证（System Flow Validation）
-**版本**: v2.0
-**最后更新**: 2025-10-16
+**版本**: v3.0
+**最后更新**: 2025-10-17 00:45
 **状态**: ✅ 已验证
 
 > 📌 **重要**: 本文档通过具体测试用例，验证需求文档和设计文档的一致性，确保全局机制能顺畅运行。
@@ -29,27 +29,29 @@
   4. 做出关键选择（pending）
   5. 应对选择的后果（pending）
 
-### 会话实例状态
-- **instance_id**: `inst_alserqi_001`
-- **character_id**: `char_alserqi`
-- **background_id**: `bg_wasteland`
-- **current_session_id**: `sess_003`（当前活跃会话）
+### 对话状态
+- **conversation_id**: `conv_alserqi_001`
+- **使用的预设**:
+  - **character**: `alserqi`（角色预设）
+  - **background**: `wasteland`（背景预设）
+  - **summaries**: `[]`（暂无引用摘要）
+- **对话轮数**: 42轮
+- **情节**: 正在与仇人对峙，即将做出关键选择
 - **plot_state**:
   ```json
   {
+    "enabled": true,
     "current_plot_index": 3,
     "current_status": "in_progress",
     "no_update_count": 2
   }
   ```
 
-### 历史会话
-- **sess_001**（已汇总，20轮对话）：情报交换、建立初步信任
-- **sess_002**（已汇总，18轮对话）：制定复仇计划、潜入据点
-
-### 当前会话 sess_003
-- **对话轮数**: 42轮
-- **情节**: 正在与仇人对峙，即将做出关键选择
+### 对话文件结构
+- **conversation.jsonl**: 当前对话的所有消息（42轮）
+- **metadata.json**: 记录使用的预设引用和RAG配置
+- **character_snapshot.json**: 角色快照（从预设复制，会成长）
+- **plot_state.json**: 剧情进度追踪
 
 ---
 
@@ -62,12 +64,12 @@
 
 ---
 
-## 步骤1：追加用户输入到会话文件
+## 步骤1：追加用户输入到对话文件
 
 ### 操作
 ```python
-# 读取当前会话文件
-session_file = "data/instances/inst_alserqi_001/sessions/sess_003.jsonl"
+# 读取当前对话文件
+conversation_file = "data/conversations/conv_alserqi_001/conversation.jsonl"
 
 # 追加用户消息
 new_message = {
@@ -76,10 +78,10 @@ new_message = {
     "turn": 42,
     "timestamp": "2025-10-16T14:30:00Z"
 }
-append_to_jsonl(session_file, new_message)
+append_to_jsonl(conversation_file, new_message)
 ```
 
-### 会话文件状态（最后3条）
+### 对话文件状态（最后3条）
 ```jsonl
 {"role":"assistant","content":"他站在你面前，眼中闪过一丝恐惧，但依然强撑着...","turn":41,"timestamp":"2025-10-16T14:29:00Z"}
 {"role":"user","content":"告诉我，当初你为什么要背叛我？","turn":42,"timestamp":"2025-10-16T14:30:00Z"}
@@ -114,24 +116,25 @@ reformulated_query = "背叛事件的原因和动机，Alserqi与仇人的过往
 
 #### 2.1.2 语义检索（Chroma）
 ```python
-# 检索 Summaries Collection
+# V1.0 简化实现：只基于 conversation_id 过滤
 results = summaries_collection.query(
     query_embeddings=embed(reformulated_query),
     where={
-        "instance_id": "inst_alserqi_001",
-        "character_id": "char_alserqi",
-        "background_id": "bg_wasteland"
+        "conversation_id": "conv_alserqi_001"
     },
     n_results=20
 )
 
 # 返回结果（示例）
-rag_events = [
-    "情报交换：Alserqi 得知背叛者的下落，开始制定复仇计划",
-    "潜入据点：Alserqi 成功潜入敌人据点，避开守卫",
-    "发现真相：Alserqi 发现背叛的原因可能与北区资源争夺有关",
-    ...（共20条）
-]
+# 注意：本对话是第一个对话，Chroma为空，返回空列表（正常情况）
+rag_events = []
+
+# 如果有历史事件，返回格式示例：
+# rag_events = [
+#     "情报交换：Alserqi 得知背叛者的下落，开始制定复仇计划",
+#     "潜入据点：Alserqi 成功潜入敌人据点，避开守卫",
+#     ...
+# ]
 ```
 
 #### 2.1.3 检查导演模块RAG兜底
@@ -142,11 +145,13 @@ rag_events = [
 
 ---
 
-### 2.2 加载角色状态
+### 2.2 加载角色快照
 
 ```python
-# 读取 character_state.json
-character_state = {
+# 读取 character_snapshot.json（从预设复制的角色快照，会成长）
+character_snapshot = {
+    "source_preset": "alserqi",
+    "snapshot_created_at": "2025-10-16T10:00:00Z",
     "base_persona": "Alserqi，废土黑帮老大，曾经掌控北区，被心腹背叛后失去一切。核心目标是复仇，但内心深处渴望重建信任。性格坚毅、多疑、重情义。",
     "evolved_persona": "经历背叛后变得极度多疑，不再轻易相信他人。但在与玩家的互动中，开始展现出脆弱的一面，愿意分享内心的痛苦。对复仇的执念逐渐转变为对正义的追求。"
 }
@@ -154,39 +159,42 @@ character_state = {
 
 ---
 
-### 2.3 加载背景设定
+### 2.3 加载背景预设
 
 ```python
-# 读取 background.json
-background = {
-    "background_id": "bg_wasteland",
-    "title": "废土复仇记",
-    "world_setting": "核战后的废土世界，资源稀缺，强者为王...",
-    "story_outline": [
-        {"index": 1, "content": "发现背叛者的线索", "status": "completed"},
-        {"index": 2, "content": "潜入敌人据点", "status": "completed"},
-        {"index": 3, "content": "与仇人对峙", "status": "in_progress"},
-        {"index": 4, "content": "做出关键选择", "status": "pending"},
-        {"index": 5, "content": "应对选择的后果", "status": "pending"},
-        ...（共10个情节点）
-    ]
-}
+# 从 metadata.json 读取背景预设ID
+metadata = load_json("data/conversations/conv_alserqi_001/metadata.json")
+background_preset_id = metadata["presets"]["background"]  # "wasteland"
+
+# 加载背景预设
+background = load_json(f"data/presets/backgrounds/{background_preset_id}.json")
+# 返回：
+# {
+#     "background_id": "wasteland",
+#     "title": "废土复仇记",
+#     "world_setting": "核战后的废土世界，资源稀缺，强者为王...",
+#     "story_outline": [
+#         {"index": 1, "content": "发现背叛者的线索"},
+#         {"index": 2, "content": "潜入敌人据点"},
+#         {"index": 3, "content": "与仇人对峙"},
+#         {"index": 4, "content": "做出关键选择"},
+#         {"index": 5, "content": "应对选择的后果"},
+#         ...（共10个情节点）
+#     ]
+# }
 ```
 
 ---
 
-### 2.4 全量读取当前会话对话历史
+### 2.4 全量读取当前对话历史
 
 ```python
-# 读取 sess_003.jsonl
-conversation_history = load_jsonl("data/instances/inst_alserqi_001/sessions/sess_003.jsonl")
+# 读取 conversation.jsonl
+conversation_history = load_jsonl("data/conversations/conv_alserqi_001/conversation.jsonl")
 
-# 包含
-# - metadata（第一行）
-# - 2条 summary（从 sess_002 汇总而来）
-# - 5轮对话（sess_002 的最后5轮）
-# - 37轮新对话（sess_003 中的对话）
-# - 共 42 轮对话（当前状态）
+# 包含 42 轮对话（完整对话历史）
+# 注意：V1.0 架构中，conversation.jsonl 存储完整对话历史
+# 未来如果需要汇总压缩，可以引用摘要预设
 ```
 
 ---
@@ -329,19 +337,14 @@ if match:
     )
 ```
 
-### 5.2 更新 instance_state.json
+### 5.2 更新 plot_state.json
 
 ```json
 {
-  "instance_id": "inst_alserqi_001",
-  "character_id": "char_alserqi",
-  "background_id": "bg_wasteland",
-  "current_session_id": "sess_003",
-  "plot_state": {
-    "current_plot_index": 3,      // 保持3（完成当前点）
-    "current_status": "completed", // 更新状态为 completed
-    "no_update_count": 0           // 清零！
-  }
+  "enabled": true,
+  "current_plot_index": 3,      // 保持3（完成当前点）
+  "current_status": "completed", // 更新状态为 completed
+  "no_update_count": 0           // 清零！
 }
 ```
 
@@ -351,7 +354,7 @@ if match:
 
 ---
 
-### 5.3 追加 AI 回复到会话文件
+### 5.3 追加 AI 回复到对话文件
 
 ```python
 # 追加清理后的回复（已删除 [PROGRESS] 标记）
@@ -361,7 +364,7 @@ clean_message = {
     "turn": 42,
     "timestamp": "2025-10-16T14:30:15Z"
 }
-append_to_jsonl(session_file, clean_message)
+append_to_jsonl(conversation_file, clean_message)
 ```
 
 ---
@@ -444,8 +447,8 @@ socket.on('stream_end', () => {
 
 **结果**：
 - ✅ LLM 重新表述查询（"背叛事件的原因和动机，Alserqi 与仇人的过往恩怨"）
-- ✅ 语义检索 Summaries Collection（返回 20 条相关事件）
-- ✅ 实例隔离（只检索 instance_id = "inst_alserqi_001"）
+- ✅ 语义检索 Summaries Collection（V1.0：基于 conversation_id 过滤）
+- ✅ 对话隔离（只检索 conversation_id = "conv_alserqi_001"）
 - ✅ 注入到 Prompt 32K+ 区域（作为"历史事件回忆"）
 
 ---
@@ -470,13 +473,13 @@ socket.on('stream_end', () => {
 
 | 数据 | 来源 | 流向 | 验证 |
 |------|------|------|------|
-| 用户输入 | 前端 → 后端 | 追加到 sess_003.jsonl | ✅ |
-| 角色状态 | character_state.json | Prompt 头部 4K | ✅ |
-| 背景设定 | background.json | Prompt 头部 4K + 中间区域 | ✅ |
-| 对话历史 | sess_003.jsonl | Prompt 中间 4K-32K | ✅ |
+| 用户输入 | 前端 → 后端 | 追加到 conversation.jsonl | ✅ |
+| 角色快照 | character_snapshot.json | Prompt 头部 4K | ✅ |
+| 背景预设 | presets/backgrounds/*.json | Prompt 头部 4K + 中间区域 | ✅ |
+| 对话历史 | conversation.jsonl | Prompt 中间 4K-32K | ✅ |
 | RAG 事件 | Chroma（Summaries Collection） | Prompt 32K+ 区域 | ✅ |
-| AI 回复 | LLM | 后端处理 → sess_003.jsonl → 前端 | ✅ |
-| [PROGRESS] | AI 回复 | 后端提取 → instance_state.json | ✅ |
+| AI 回复 | LLM | 后端处理 → conversation.jsonl → 前端 | ✅ |
+| [PROGRESS] | AI 回复 | 后端提取 → plot_state.json | ✅ |
 
 ---
 
@@ -486,20 +489,19 @@ socket.on('stream_end', () => {
 
 **结果**：
 
-**instance_state.json 变更**：
+**plot_state.json 变更**：
 ```json
 {
-  "plot_state": {
-    "current_plot_index": 3,
-    "current_status": "in_progress" → "completed",  // ✅ 更新
-    "no_update_count": 2 → 0                        // ✅ 清零
-  }
+  "enabled": true,
+  "current_plot_index": 3,
+  "current_status": "in_progress" → "completed",  // ✅ 更新
+  "no_update_count": 2 → 0                        // ✅ 清零
 }
 ```
 
-**会话文件变更**：
+**对话文件变更**：
 ```jsonl
-// sess_003.jsonl 新增 2 条消息
+// conversation.jsonl 新增 2 条消息
 {"role":"user","content":"告诉我，当初你为什么要背叛我？","turn":42,...}
 {"role":"assistant","content":"...复仇...还是放下？","turn":42,...}  // 不包含 [PROGRESS]
 ```
@@ -524,36 +526,29 @@ socket.on('stream_end', () => {
 
 ### 触发容错处理
 
-#### 1. 分层检索
+#### 1. RAG检索（导演模块兜底）
 
-**第一次检索**（当前实例，高权重）：
+**V1.0 简化实现**（只检索当前对话）：
 ```python
-events_current = chroma_collection.query(
+events = chroma_collection.query(
     query_embeddings=embed("故事大纲第3点：与仇人对峙"),
     where={
-        "instance_id": "inst_alserqi_001",
-        "character_id": "char_alserqi",
-        "background_id": "bg_wasteland"
+        "conversation_id": "conv_alserqi_001"
     },
-    n_results=15
+    n_results=20
 )
-# 返回当前实例中与"仇人对峙"相关的 15 条事件
+# 返回当前对话中与"仇人对峙"相关的事件
 ```
 
-**第二次检索**（其他实例，低权重）：
+**V2.0+ 扩展**（预留跨对话检索能力）：
 ```python
-events_others = chroma_collection.query(
-    query_embeddings=embed("故事大纲第3点：与仇人对峙"),
-    where={
-        "$and": [
-            {"instance_id": {"$ne": "inst_alserqi_001"}},
-            {"character_id": "char_alserqi"},
-            {"background_id": "bg_wasteland"}
-        ]
-    },
-    n_results=5
-)
-# 返回其他实例中与"仇人对峙"相关的 5 条事件（剧情经验参考）
+# 未来可通过 metadata.json 中的 rag_scope 配置跨对话检索
+# 例如：
+# if metadata["rag_scope"]["mode"] == "tagged":
+#     where = {
+#         "tags.character": "alserqi",
+#         "tags.theme": "revenge"
+#     }
 ```
 
 #### 2. Prompt注入
@@ -564,18 +559,12 @@ events_others = chroma_collection.query(
 【导演提醒】
 你现在应该推进到故事大纲第3点：与仇人对峙
 
-【当前剧情中已发生的事件】（这些是当前剧情中实际发生的事件）
+【历史事件回忆】（V1.0：仅当前对话的历史事件）
 - Alserqi 发现背叛者的线索，开始追查
 - Alserqi 制定了详细的潜入计划
 - Alserqi 成功潜入敌人据点
 - Alserqi 找到了仇人的藏身之处
-...（共15条，当前实例）
-
-【剧情经验参考】（其他剧情中的类似情节，仅供参考剧情走向，不代表当前剧情的事实）
-- 参考：某次对峙中，Alserqi 选择了直接开枪复仇
-- 参考：某次对峙中，Alserqi 选择了原谅仇人，放下仇恨
-- 参考：某次对峙中，Alserqi 发现了背叛的真相，改变了复仇计划
-...（共5条，其他实例）
+...（最多20条）
 
 ==================== 尾部4K ====================
 【用户最新输入】
@@ -585,22 +574,23 @@ events_others = chroma_collection.query(
 #### 3. 效果
 
 - ✅ 提醒 AI 当前应该推进到第 3 个情节点
-- ✅ 提供当前实例的历史事件（帮助 AI 理解已经发生了什么）
-- ✅ 提供其他实例的经验参考（帮助 AI 理解剧情应该怎么走）
-- ✅ 明确区分"当前剧情事实"和"剧情经验参考"，避免污染当前剧情
+- ✅ 提供当前对话的历史事件（帮助 AI 理解已经发生了什么）
+- ✅ V1.0 简化实现：只检索当前对话，避免跨对话污染
 
 ---
 
-## 扩展场景：汇总功能
+## 扩展场景：汇总功能（可选，未来实现）
+
+> 注意：V1.0 架构简化，conversation.jsonl 存储完整对话历史。汇总功能可选，作为摘要预设供其他对话引用。
 
 ### 触发
-用户点击"📝 汇总对话"按钮
+用户点击"📝 生成摘要"按钮
 
 ### 流程
 
-#### 1. 全量读取当前会话
+#### 1. 全量读取当前对话
 ```python
-conversation = load_jsonl("data/instances/inst_alserqi_001/sessions/sess_003.jsonl")
+conversation = load_jsonl("data/conversations/conv_alserqi_001/conversation.jsonl")
 # 包含 42 轮对话
 ```
 
@@ -621,63 +611,54 @@ summaries = [
 ]
 ```
 
-#### 3. 写入 Chroma（分层摘要）
+#### 3. 保存为摘要预设
 
-**Summaries Collection**：
+```python
+# 保存到预设库
+summary_preset = {
+    "summary_id": f"summary_{conversation_id}_{timestamp}",
+    "source_conversation": "conv_alserqi_001",
+    "created_at": "2025-10-16T14:35:00Z",
+    "content": summaries
+}
+save_json(f"data/presets/summaries/{summary_preset['summary_id']}.json", summary_preset)
+```
+
+#### 4. 写入 Chroma（用于RAG检索）
+
 ```python
 for i, item in enumerate(summaries):
     summaries_collection.add(
-        ids=[f"summary_sess_003_{i}"],
+        ids=[f"summary_{conversation_id}_{i}"],
         documents=[item["summary"]],
         metadatas=[{
-            "related_plot_id": f"plot_sess_003_{i}",
-            "session_id": "sess_003",
-            "instance_id": "inst_alserqi_001",
-            "character_id": "char_alserqi",
-            "background_id": "bg_wasteland"
+            "conversation_id": "conv_alserqi_001",
+            "summary_preset_id": summary_preset["summary_id"]
         }]
     )
-```
 
-**Plots Collection**：
-```python
-for i, item in enumerate(summaries):
     plots_collection.add(
-        ids=[f"plot_sess_003_{i}"],
+        ids=[f"plot_{conversation_id}_{i}"],
         documents=[item["details"]],
         metadatas=[{
-            "related_summary_id": f"summary_sess_003_{i}",
-            "session_id": "sess_003",
-            "instance_id": "inst_alserqi_001",
-            "character_id": "char_alserqi",
-            "background_id": "bg_wasteland"
+            "conversation_id": "conv_alserqi_001",
+            "related_summary_id": f"summary_{conversation_id}_{i}"
         }]
     )
 ```
 
-#### 4. 创建新会话
+#### 5. 其他对话可引用此摘要
 
-**sess_004.jsonl**（初始内容）：
-```jsonl
-{"type":"metadata","instance_id":"inst_alserqi_001","session_id":"sess_004","created_at":"2025-10-16T14:35:00Z","continued_from":"sess_003"}
-{"type":"summary","content":"与仇人对峙：Alserqi 找到仇人，质问背叛原因，仇人承认错误并请求原谅"}
-{"type":"summary","content":"做出关键选择：Alserqi 决定放下仇恨，选择原谅仇人"}
-{"role":"user","content":"...","turn":1,"timestamp":"..."}
-{"role":"assistant","content":"...","turn":1,"timestamp":"..."}
-...（最后5轮对话）
-```
-
-#### 5. 更新 instance_state.json
-```json
-{
-  "current_session_id": "sess_003" → "sess_004"  // 更新当前会话
+```python
+# 创建新对话时，可在 metadata.json 中引用摘要预设
+metadata = {
+    "conversation_id": "conv_alserqi_002",
+    "presets": {
+        "character": "alserqi",
+        "background": "wasteland",
+        "summaries": [summary_preset["summary_id"]]  # 引用之前的摘要
+    }
 }
-```
-
-#### 6. 返回前端
-```javascript
-// 前端自动切换到新会话 sess_004
-router.push(`/instances/${instance_id}/chat?session=sess_004`);
 ```
 
 ---
@@ -689,14 +670,14 @@ router.push(`/instances/${instance_id}/chat?session=sess_004`);
 
 ### 流程
 
-#### 1. 加载当前角色状态
+#### 1. 加载当前角色快照
 ```python
-character_state = load_json("data/instances/inst_alserqi_001/character_state.json")
+character_snapshot = load_json("data/conversations/conv_alserqi_001/character_snapshot.json")
 ```
 
-#### 2. 全量读取当前会话对话
+#### 2. 全量读取当前对话
 ```python
-conversation = load_jsonl("data/instances/inst_alserqi_001/sessions/sess_003.jsonl")
+conversation = load_jsonl("data/conversations/conv_alserqi_001/conversation.jsonl")
 ```
 
 #### 3. 调用 LLM 更新 evolved_persona
@@ -725,8 +706,8 @@ Alserqi，废土黑帮老大，曾经掌控北区，被心腹背叛后失去一�
 
 #### 4. 保存新的 evolved_persona
 ```python
-character_state["evolved_persona"] = new_evolved_persona
-save_json("data/instances/inst_alserqi_001/character_state.json", character_state)
+character_snapshot["evolved_persona"] = new_evolved_persona
+save_json("data/conversations/conv_alserqi_001/character_snapshot.json", character_snapshot)
 ```
 
 #### 5. 返回前端
@@ -774,10 +755,10 @@ toast.success("角色记忆已更新");
 | 场景 | 验证结果 |
 |------|---------|
 | no_update_count < 3 | ✅ 通过（未触发RAG兜底） |
-| no_update_count >= 3 | ✅ 通过（触发RAG兜底，分层检索） |
+| no_update_count >= 3 | ✅ 通过（触发RAG兜底，检索当前对话） |
 | AI输出[PROGRESS] | ✅ 通过（清零no_update_count，更新plot_state） |
 | AI未输出[PROGRESS] | ✅ 通过（no_update_count += 1） |
-| 汇总后新会话 | ✅ 通过（包含摘要+最后5轮对话） |
+| 汇总生成摘要预设 | ✅ 通过（保存到 presets/summaries/，可被其他对话引用） |
 | Chroma为空（首次对话） | ✅ 通过（返回空列表，正常流程） |
 
 ---
@@ -804,7 +785,26 @@ toast.success("角色记忆已更新");
 
 ---
 
-**文档版本**: v2.0
+**文档版本**: v3.0
 **创建日期**: 2025-10-14
-**最后更新**: 2025-10-16
+**最后更新**: 2025-10-17 00:45
 **验证状态**: ✅ 已通过
+
+---
+
+## 版本变更记录
+
+### v3.0 (2025-10-17 00:45)
+- **架构适配**：从"会话实例"架构更新为"对话文件+预设引用"架构
+- **术语更新**：instance → conversation，character_state → character_snapshot
+- **数据结构更新**：
+  - conversation.jsonl 替代 sessions/*.jsonl
+  - character_snapshot.json 替代 character_state.json
+  - 新增 metadata.json（预设引用）
+  - plot_state.json 独立文件
+- **RAG简化**：V1.0 基于 conversation_id 过滤，V2.0+ 预留扩展
+- **汇总功能调整**：作为摘要预设供其他对话引用
+
+### v2.0 (2025-10-16)
+- 基于模块化设计文档（v0.5.0）生成
+- 使用 Alserqi + 废土复仇记 + 第42轮对话作为测试用例

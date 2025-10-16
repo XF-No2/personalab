@@ -1,8 +1,8 @@
 # PersonaLab 项目当前状态
 
 **文件路径**: `.project_management/current_status.md`
-**最后更新**: 2025-10-16 23:15
-**当前版本**: v0.5.0
+**最后更新**: 2025-10-17 01:00
+**当前版本**: v0.6.0
 **状态**: 🟡 设计阶段
 
 > 📌 **重要**：这是项目的"活文档"，记录当前真实状态。
@@ -221,6 +221,85 @@ personalab/
 ---
 
 ## 📝 最近变更（最近 5 次）
+
+### 2025-10-17 01:00 - 完成架构重构验证（SYSTEM_FLOW.md v3.0 + REQUIREMENTS.md v4.0） ✅
+
+**完成内容**：
+1. **SYSTEM_FLOW.md v3.0**（811行）
+   - 适配"对话文件+预设引用"架构
+   - 术语更新：instance → conversation，character_state → character_snapshot
+   - 数据结构更新：conversation.jsonl, metadata.json, character_snapshot.json
+   - RAG简化：V1.0 基于 conversation_id 过滤
+   - 新增版本变更记录章节
+
+2. **REQUIREMENTS.md v4.0**（454行）
+   - 批量术语更新（会话实例 → 对话，instances/ → conversations/）
+   - "对话（Conversation）"概念重新定义：
+     - 对话文件是核心数据
+     - 预设是可复用的 Prompt 模块
+     - 快照机制：创建时复制，后续独立演化
+   - 功能需求适配：对话管理、预设引用
+   - 新增版本变更记录章节
+
+3. **设计审查问题追踪**（design_audit_follow_up_2025-10-17.md）
+   - 追踪10个审查问题的解决状态
+   - **已解决**：5个（问题 1, 3, 4, 5, 7）
+     - 问题 1：turn 编号混乱 → V1.0 单文件解决
+     - 问题 3：RAG 深度搜索 → V1.0 暂不实现
+     - 问题 4：角色初始化 → 补充预设格式
+     - 问题 5：汇总 JSON 解析 → 汇总变为可选
+     - 问题 7：RAG 污染 → V1.0 只检索当前对话
+   - **待解决**：5个（问题 2, 6, 8, 9, 10）
+     - 问题 2：拉回主线功能设计缺失（P0，阻塞实现）
+     - 其他问题优先级：P1-P3
+
+**验证结果**：
+- ✅ 全局机制在新架构下能够顺畅运行
+- ✅ REQUIREMENTS.md、DESIGN_OVERVIEW.md、SYSTEM_FLOW.md 三者逻辑自洽
+- ✅ 架构重构成功解决 5 个设计问题
+- ⚠️ 仍有 1 个 P0 问题待设计（"拉回主线"功能）
+
+### 2025-10-17 00:30 - 架构重构：从"会话实例"到"对话文件+预设引用" ✅
+
+**背景**：
+用户在测试中发现，"会话实例"架构过于僵化：
+1. 角色与会话实例绑定死了，无法灵活切换
+2. 背景、摘要都是"预设内容"（Prompt模块），应该可复用
+3. 需要更灵活的架构，支持快速测试和调试（类似IDE工作方式）
+
+**重构内容**：
+1. **核心架构变更** - 从"会话实例中心"改为"对话文件中心"
+   - 对话文件（Conversation）成为核心数据
+   - 预设库（Presets）作为可复用的 Prompt 模块
+   - 创建对话时从预设复制快照，后续独立演化
+
+2. **数据结构重构**（data_structure.md v2.0）：
+   - 删除：`instances/` 目录、`instance_state.json`、`character_state.json`
+   - 新增：`conversations/` 目录、`presets/` 目录
+   - 对话文件结构：
+     - `conversation.jsonl` - 对话记录
+     - `metadata.json` - 预设引用和RAG范围配置
+     - `character_snapshot.json` - 角色快照（会成长）
+     - `plot_state.json` - 剧情进度（可选）
+   - 预设库结构：
+     - `presets/characters/*.json` - 角色预设
+     - `presets/backgrounds/*.json` - 背景预设
+     - `presets/summaries/*.json` - 摘要预设
+
+3. **RAG检索简化**（V1.0实现）：
+   - 基于 `conversation_id` 过滤（只检索当前对话）
+   - 预留扩展：`rag_scope` 字段支持语义标签（V2.0+）
+
+4. **模块文档更新**：
+   - DESIGN_OVERVIEW.md v0.6.0 - 适配新架构
+   - persona.md v2.0 - character_state.json → character_snapshot.json
+   - rag.md, director.md - 术语更新（instance → conversation）
+
+**重构效果**：
+- ✅ 灵活性：对话文件可以随时打开，预设可以自由组合
+- ✅ 简化实现：RAG基于conversation_id（V1.0），易于实现
+- ✅ 预留扩展：字段预留语义标签扩展（V2.0+）
+- ✅ 文档一致性：5个核心文档已同步更新
 
 ### 2025-10-16 23:15 - 重构项目管理文件体系 ✅
 
