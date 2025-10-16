@@ -1,7 +1,7 @@
 # PersonaLab 概要设计文档
 
 **文档类型**: 概要设计（Architecture Overview）
-**版本**: v0.3.2
+**版本**: v0.3.3
 **最后更新**: 2025-10-16
 **状态**: 🟡 设计中
 
@@ -42,8 +42,8 @@ PersonaLab 数据架构
 ├─ 事件库（Event Library）
 │   - 存储：Chroma 向量数据库（分两个 Collection）
 │   - 内容：分层摘要（Hierarchical Summary）的情节数据
-│       ├─ 粗粒度层（Summaries Collection）：情节点摘要
-│       └─ 细粒度层（Plots Collection）：详细剧情素材
+│       ├─ Summaries Collection：情节点摘要
+│       └─ Plots Collection：详细剧情素材
 │   - 作用：RAG 检索历史事件（支持深度搜索）
 │   - 写入：汇总时生成并写入
 │
@@ -124,8 +124,8 @@ PersonaLab 数据架构
   Prompt 要求:
     "请把以下对话按照情节点进行汇总。
      每个情节点包含：
-     1. 摘要：一句话概括（粗粒度）
-     2. 详细素材：具体的剧情过程（细粒度）
+     1. summary（摘要）：一句话概括情节点
+     2. details（详细素材）：具体的剧情过程
 
      输出 JSON 格式：
      [
@@ -154,35 +154,33 @@ PersonaLab 数据架构
   ↓
 [4] 写入 Chroma（分层摘要）
   for each 情节点:
-    ├─ 粗粒度层 → Summaries Collection
+    ├─ Summaries Collection
     │   - ID: summary_{session_id}_{index}
     │   - 内容: summary（摘要）
     │   - 元数据: related_plot_id, session_id, instance_id
     │
-    └─ 细粒度层 → Plots Collection
+    └─ Plots Collection
         - ID: plot_{session_id}_{index}
         - 内容: details（详细素材）
         - 元数据: related_summary_id, session_id, instance_id
   ↓
-[5] 关闭当前会话（标记为 summarized）
-  ↓
-[6] 创建新会话
+[5] 创建新会话
   - 初始化内容（可配置顺序）:
-      所有摘要（粗粒度层）+ 最后5轮对话
+      所有 Summaries + 最后5轮对话
   - 写入新会话文件：
       {"type":"summary","content":"摘要文本1"}
       {"type":"summary","content":"摘要文本2"}
       ...（最后5轮的 user/assistant 消息）
   ↓
-[7] 返回前端，自动切换到新会话
+[6] 返回前端，自动切换到新会话
 ```
 
 **关键设计**：
-- **分层摘要**：一次 LLM 调用生成两层数据（粗粒度摘要 + 细粒度素材）
+- **分层摘要**：一次 LLM 调用生成两层数据（Summaries + Plots）
 - **严格解析**：JSON 格式输出，解析失败直接报错，由用户决定重试
 - **分层存储**：摘要和素材分别存入 Chroma 的不同 Collection，通过 ID 关联
 - **剧情延续**：新会话包含摘要（纯文本）+ 最后5轮对话，保持剧情连贯性
-- **可复用素材**：细粒度素材保存在 Chroma，可被导演模块、RAG 检索等功能复用
+- **可复用素材**：Plots 保存在 Chroma，可被导演模块、RAG 检索等功能复用
 
 ---
 
@@ -212,32 +210,59 @@ PersonaLab 数据架构
 
 ---
 
-### 3.4 回退重新生成流程
+### 3.4 会话编辑功能（Prompt 编辑器）
 
-**触发**: 用户点击"⬅️ 回退 N 步"按钮
+**核心理念**：
+- 对话界面本质上是一个 **Prompt 编辑器**
+- 操作单位是"一条消息"（user 或 assistant）
+- 用户可以随意编辑对话历史，然后继续对话
 
-**前置条件**：
-- 只有 status: "active" 的会话才能回退
-- status: "summarized" 或 "closed" 的会话不可回退（前端禁用按钮）
+**支持的编辑操作**：
+1. **删除消息** - 删除任意一条 user 或 assistant 消息
+2. **编辑消息** - 修改任意一条消息的内容
+3. **重新生成** - 编辑 user 消息后，删除后续内容，重新生成 AI 回复
 
+**编辑流程示例**：
 ```
-回退流程
+原始对话：
+  1. User: 你好
+  2. Assistant: 你好，有什么事吗？
+  3. User: 今天天气怎么样？
+  4. Assistant: 今天天气很好。
+  5. User: 那我们出去玩吧
+  6. Assistant: 好的，去哪里玩？
+
+用户操作：
+  - 删除消息 3 和 4（关于天气的讨论）
+  - 编辑消息 5 为"我们讨论一下项目吧"
+  - 重新生成
+
+结果：
+  1. User: 你好
+  2. Assistant: 你好，有什么事吗？
+  5. User: 我们讨论一下项目吧
+  → AI 基于 1、2、5 生成新回复
+```
+
+**后端实现**：
+```
+用户编辑操作
   ↓
-[1] 检查会话状态（必须是 "active"）
+[1] 前端发送编辑后的消息列表
   ↓
-[2] 读取会话文件
+[2] 后端重写会话文件（覆盖旧内容）
   ↓
-[3] 删除最后 N 轮对话（N 轮 = 2N 条消息）
+[3] 读取新的会话内容
   ↓
-[4] 重写会话文件
+[4] 基于现有消息生成 AI 回复
   ↓
-[5] 返回前端，用户可重新输入
+[5] 追加新回复到会话文件
 ```
 
 **设计原则**：
-- 单一数据源，只需修改 .jsonl 文件
-- 不需要同步更新缓存（因为没有缓存）
-- 已汇总的会话不可回退（避免与 Chroma 数据不一致）
+- 无任何限制：用户可以编辑任意会话文件的任意消息
+- 单一数据源：只需修改 .jsonl 文件
+- 简单直接：不需要状态检查、不需要缓存同步
 
 ---
 
@@ -279,7 +304,7 @@ PersonaLab 数据架构
 ```
 用户输入："你还记得之前的复仇吗？"
   ↓
-RAG 搜索 Summaries Collection（只查粗粒度层）
+RAG 搜索 Summaries Collection
   ↓
 返回相关摘要：
   - "复仇行动：小张对小玲进行了复仇，导致小玲重伤"
@@ -300,8 +325,8 @@ RAG 搜索 Summaries Collection
 通过 related_plot_id 查询 Plots Collection
   ↓
 返回：
-  - 粗粒度：summary_001（摘要）
-  - 细粒度：plot_001（详细素材："小张假装和解，邀请小玲到废弃工厂..."）
+  - Summary: summary_001（摘要）
+  - Plot: plot_001（详细素材："小张假装和解，邀请小玲到废弃工厂..."）
   ↓
 组装 Prompt（包含摘要 + 详细素材）
 ```
@@ -309,18 +334,18 @@ RAG 搜索 Summaries Collection
 - 触发条件：
   - 用户询问"怎么"、"如何"、"详细过程"
   - 导演模块需要参考类似剧情
-  - 自动判断（相似度 > 阈值则展开细粒度层）
+  - 自动判断（相似度 > 阈值则展开 Plots）
 
 ### 5.2 RAG 检索范围
 
 **检索对象**：
-- 只检索**已汇总的会话**（status: "summarized"）的事件
+- 只检索**已汇总的会话**的事件（存储在 Chroma 中的历史数据）
 - 当前活跃会话不走 RAG（直接全量读取 .jsonl 文件）
 - 首次对话时 Chroma 为空（正常情况，RAG 返回空列表）
 
 **实例隔离**：
 - 日常对话：只检索当前 `instance_id` 的事件（严格隔离）
-- 返回 20 条相关事件（粗粒度层为主）
+- 返回 20 条相关事件（Summaries 为主）
 
 **导演兜底（可选）**：
 - 跨实例检索（借鉴其他实例的剧情推进经验）
@@ -405,7 +430,7 @@ data/
 
 **首次会话示例**：
 ```jsonl
-{"type":"metadata","instance_id":"inst_001","session_id":"sess_001","status":"active","created_at":"...","continued_from":null}
+{"type":"metadata","instance_id":"inst_001","session_id":"sess_001","created_at":"...","continued_from":null}
 {"role":"user","content":"你好","turn":1,"timestamp":"..."}
 {"role":"assistant","content":"你好，有什么事吗？","turn":1,"timestamp":"..."}
 {"role":"user","content":"你还记得我之前说的话吗？","turn":2,"timestamp":"..."}
@@ -413,7 +438,7 @@ data/
 
 **汇总后的新会话示例**：
 ```jsonl
-{"type":"metadata","instance_id":"inst_001","session_id":"sess_002","status":"active","created_at":"...","continued_from":"sess_001"}
+{"type":"metadata","instance_id":"inst_001","session_id":"sess_002","created_at":"...","continued_from":"sess_001"}
 {"type":"summary","content":"情报交换与信任建立。用户告知 Alserqi 北区据点有背叛者的情报..."}
 {"type":"summary","content":"制定复仇计划。Alserqi 决定前往调查，制定了详细的潜入计划..."}
 {"role":"user","content":"（旧会话第46轮）你确定这个计划可行吗？","turn":1,"timestamp":"..."}
@@ -423,12 +448,16 @@ data/
 
 **消息类型定义**：
 - `type:"metadata"` - 会话元数据（每个会话文件第一行）
-  - `status`: "active" / "closed" / "summarized"
-  - `continued_from`: 如果是汇总后的新会话，记录旧会话 ID
+  - `instance_id`: 所属会话实例 ID
+  - `session_id`: 当前会话 ID
+  - `created_at`: 创建时间
+  - `continued_from`: 如果是汇总后的新会话，记录旧会话 ID（否则为 null）
 - `type:"summary"` - 历史剧情摘要（纯文本，汇总后新会话才有）
-  - `content`: 摘要文本（粗粒度层，给 AI 看的剧情延续信息）
+  - `content`: 摘要文本（给 AI 看的剧情延续信息）
 - `role:"user"` / `role:"assistant"` - 对话消息
+  - `content`: 消息内容
   - `turn`: 轮次编号（一轮 = 一条 user + 一条 assistant）
+  - `timestamp`: 时间戳
 
 ---
 
@@ -488,12 +517,12 @@ data/
 3. ✅ **取消滑动窗口机制** → 不限制对话数量
 4. ✅ **汇总功能**：独立 LLM Agent，一次调用生成分层摘要
 5. ✅ **分层摘要存储**：
-   - 粗粒度层（摘要）：情节点概括，用于延续历史
-   - 细粒度层（详细素材）：剧情过程，可复用的剧情设计
+   - Summaries Collection（摘要）：情节点概括，用于延续历史
+   - Plots Collection（详细素材）：剧情过程，可复用的剧情设计
    - Chroma 分两个 Collection 存储，通过 ID 关联
-6. ✅ **RAG 深度搜索**：支持浅层（只查粗粒度）和深度（展开细粒度）
+6. ✅ **RAG 深度搜索**：支持浅层（只查 Summaries）和深度（展开 Plots）
 7. ✅ **严格解析**：JSON 格式输出，解析失败报错，不降级
-8. ✅ **回退功能**：支持删除最近 N 轮对话
+8. ✅ **会话编辑**：用户可以编辑/删除任意消息，自由操作对话历史
 
 ### 待确定
 
@@ -526,7 +555,7 @@ data/
 
 ---
 
-**文档版本**: v0.3.2
+**文档版本**: v0.3.3
 **创建日期**: 2025-10-15
 **最后更新**: 2025-10-16
 **文档类型**: 概要设计（不含详细实现）
@@ -534,6 +563,17 @@ data/
 ---
 
 ## 变更记录
+
+### v0.3.3 (2025-10-16)
+- 🗑️ **删除无用设计**：删除会话文件的 `status` 字段（完全没必要）
+- 🔄 **重新设计会话编辑**：
+  - 删除"回退功能"及其所有约束条件
+  - 改为"会话编辑功能"：用户可以编辑/删除任意消息
+  - 明确核心理念：对话界面是 Prompt 编辑器
+- 📝 **修复命名**：
+  - "粗粒度层/细粒度层" → "Summaries Collection / Plots Collection"
+  - 提高可扩展性，避免层级增加时的命名问题
+- 📝 **删除状态引用**：删除所有对 `status` 字段的引用和检查
 
 ### v0.3.2 (2025-10-16)
 - 🔧 **术语统一**："父子结构" → "分层摘要（Hierarchical Summary）"
