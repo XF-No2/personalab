@@ -376,11 +376,20 @@ REQUIREMENTS.md、DESIGN_OVERVIEW.md、SYSTEM_FLOW.md 三个文档存在大量�
 
 ## 🤝 AI 协作指南
 
-### 基本原则
+> **新会话必读**：如果你是新的 AI 会话，请先阅读本文件（PROJECT_STATUS.md）了解项目状态，然后参考以下指南。
 
-1. **归档文档是历史快照**：`docs/archive/` 不代表最新状态
-2. **问题查阅顺序**：PROJECT_STATUS.md → DESIGN.md → 规范.md
-3. **设计原则**：纯定性描述，绝对禁止量化
+### 文档简称约定
+
+- **PS** = PROJECT_STATUS.md（本文件，项目状态）
+- **规范** = 规范.md（工作规范，执行规范化操作时读取）
+- **README** = README.md（项目入口文档）
+
+### 文档查阅顺序
+
+1. **首次了解项目** → PROJECT_STATUS.md（本文件）
+2. **了解架构设计** → docs/DESIGN_OVERVIEW.md (v0.5.0)
+3. **执行规范操作** → 规范.md（归档、重构、版本发布等）
+4. **了解详细设计** → docs/design/ 目录下的模块文档
 
 ### 操作规范
 
@@ -389,6 +398,12 @@ REQUIREMENTS.md、DESIGN_OVERVIEW.md、SYSTEM_FLOW.md 三个文档存在大量�
 - 重构：`按照规范重构`
 - 版本发布：`按照规范发布`
 - 更新PS：`按照规范更新PS` 或 `更新PS`
+
+### 基本原则
+
+1. **归档文档是历史快照**：`docs/archive/` 不代表最新状态
+2. **设计原则**：纯定性描述，绝对禁止量化
+3. **时间格式**：所有文档时间统一为 `YYYY-MM-DD HH:MM`（24小时制）
 
 ---
 
