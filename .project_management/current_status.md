@@ -1,11 +1,29 @@
 # PersonaLab 项目当前状态
 
-**最后更新**: 2025-10-16 22:10
-**当前版本**: v0.5.0 (拆分设计文档，模块化详细设计)
+**文件路径**: `.project_management/current_status.md`
+**最后更新**: 2025-10-16 23:15
+**当前版本**: v0.5.0
 **状态**: 🟡 设计阶段
 
-> 📌 **重要**：这是项目的"活文档"，记录**当前真实状态**，而非某个发布版本。
-> 版本发布时，会归档快照到 `docs/archive/v{版本号}/`
+> 📌 **重要**：这是项目的"活文档"，记录当前真实状态。
+> 🤖 **AI 新会话**：这是你了解项目的第一站。
+
+---
+
+## 📖 文档导航
+
+**你现在在**: `current_status.md`（项目当前状态）
+
+**其他项目管理文件**:
+- **README.md** - 项目入口和 AI 启动指南（根目录）
+- **ai_operation_manual.md** - AI 操作手册（.project_management/ai_operation_manual.md）
+- **project_conventions.md** - 项目约定（.project_management/project_conventions.md）
+- **CHANGELOG.md** - 版本历史（根目录）
+
+**技术设计文档**:
+- **DESIGN_OVERVIEW.md** - 概要设计（docs/DESIGN_OVERVIEW.md）
+- **REQUIREMENTS.md** - 需求文档（docs/REQUIREMENTS.md）
+- **SYSTEM_FLOW.md** - 系统流程验证（docs/SYSTEM_FLOW.md）
 
 ---
 
@@ -48,6 +66,11 @@ PersonaLab（人格实验室）是一个 **AI 角色对话平台**，支持长�
 
 ```
 personalab/
+├── .project_management/      # 项目管理文件
+│   ├── current_status.md     # 项目当前状态（本文件）
+│   ├── ai_operation_manual.md # AI 操作手册
+│   └── project_conventions.md # 项目约定
+│
 ├── frontend/                 # 前端（待生成）
 │   ├── src/
 │   │   ├── app/            # Next.js 页面
@@ -87,6 +110,7 @@ personalab/
 ├── docs/
 │   ├── DESIGN_OVERVIEW.md   # 概要设计文档 ✅ v0.5.0
 │   ├── REQUIREMENTS.md      # 需求文档 ✅ v3.0
+│   ├── SYSTEM_FLOW.md       # 系统流程验证 ✅ v2.0
 │   ├── QUESTIONS.md         # 待解决问题清单 ✅
 │   ├── design/              # 详细设计文档（模块化）
 │   │   ├── data_structure.md
@@ -101,10 +125,8 @@ personalab/
 │   ├── reports/
 │   └── tests/
 │
-├── PROJECT_STATUS.md         # 项目状态（本文件）
-├── 规范.md                   # 工作规范
-├── README.md
-└── CHANGELOG.md
+├── README.md                 # 项目门户
+└── CHANGELOG.md              # 版本历史
 ```
 
 ---
@@ -186,16 +208,11 @@ personalab/
 - [x] 研究Silly Tavern和Letta/MemGPT参考系统
 - [x] 设计导演模块（Director）- 剧情推进控制
 - [x] 设计分层检索策略（当前实例 + 其他实例经验）
+- [x] 梳理系统运作机制总览（SYSTEM_FLOW.md v2.0）
+- [x] 拆分设计文档，模块化详细设计（v0.5.0）
 
 ### 进行中
 
-- [x] 需求澄清讨论（2025-10-14 晚）
-- [x] UI 布局修正与功能清单整理（2025-10-14 晚）
-- [x] 🟢 梳理系统运作机制总览（2025-10-16 22:10）- 已完成
-  - [x] 第一步：完整交互流程（端到端，标注所有机制介入点）✅ SYSTEM_FLOW.md v2.0
-  - [x] 第二步：验证数据流转和状态变更 ✅
-  - [x] 第三步：验证Prompt组装策略 ✅
-  - [x] 第四步：验证各模块协同工作 ✅
 - [ ] 待讨论：导演模块"拉回主线"具体策略
 - [ ] 待讨论：快动态层"升级"机制设计
 - [ ] 待实现：后端核心模块
@@ -203,9 +220,42 @@ personalab/
 
 ---
 
-## 📝 最近调整记录
+## 📝 最近变更（最近 5 次）
 
-> 💡 **历史记录归档**：更早的变更记录已移至 [docs/PROJECT_HISTORY.md](docs/PROJECT_HISTORY.md)
+### 2025-10-16 23:15 - 重构项目管理文件体系 ✅
+
+**背景**：
+原有的 README、PROJECT_STATUS.md、规范.md 三个文件存在问题：
+1. 根目录文件过多（PROJECT_STATUS.md 名字过长）
+2. 命名不够精确（"规范.md"、"workflow" 等宽泛词汇）
+3. AI 新会话理解困难（需要滚动到第377行才能看到引导）
+4. 职责不够清晰（规范.md 混合了操作流程和约定规范）
+
+**重构内容**：
+1. **集中管理** - 创建 `.project_management/` 目录，集中存放项目管理文件
+2. **精确命名**：
+   - `current_status.md` - 项目当前状态（替代 PROJECT_STATUS.md）
+   - `ai_operation_manual.md` - AI 操作手册（从"规范.md"中提取操作流程部分）
+   - `project_conventions.md` - 项目约定（从"规范.md"中提取规范约定部分）
+3. **职责分离**：
+   - 操作流程（更新状态、发布版本、归档）→ ai_operation_manual.md
+   - 项目约定（目录结构、时间格式、设计原则）→ project_conventions.md
+4. **README 优化** - 添加"AI 新会话启动指南"，明确阅读顺序和文件路径
+5. **导航优化** - 每个文件顶部都有"文档导航"章节，标注当前位置和其他文件路径
+
+**重构效果**：
+- ✅ 根目录只保留 2 个 .md 文件（README + CHANGELOG）
+- ✅ 命名精确无歧义（不再使用 workflow、AI 等宽泛词）
+- ✅ AI 新会话能在 README 开头立即看到启动指南
+- ✅ 每个文件职责单一，易于维护
+- ✅ 所有文件路径明确标注，AI 不会迷路
+
+### 2025-10-16 22:10 - 优化文档协同关系 - 新会话引导完善 ✅
+
+**调整内容**:
+1. PROJECT_STATUS.md - 添加"AI 协作指南"章节，明确文档简称和查阅顺序
+2. 规范.md v1.3 - 新增"AI 新会话注意事项"章节，将简称约定移至顶部
+3. README.md - 完善AI启动指南，确保新会话能快速理解PS含义
 
 ### 2025-10-16 22:10 - 生成 SYSTEM_FLOW.md v2.0 并添加文档时间格式规范 ✅
 
@@ -327,7 +377,7 @@ REQUIREMENTS.md、DESIGN_OVERVIEW.md、SYSTEM_FLOW.md 三个文档存在大量�
 - [ ] 生成对话功能组件
 - [ ] 生成角色管理组件
 - [ ] 生成背景管理组件
-- [ ] 生成页面路由 
+- [ ] 生成页面路由
 
 ### 中优先级
 
@@ -342,68 +392,6 @@ REQUIREMENTS.md、DESIGN_OVERVIEW.md、SYSTEM_FLOW.md 三个文档存在大量�
 - [ ] 编写组件文档
 - [ ] 添加单元测试
 - [ ] 性能监控和优化
-
----
-
-## ⚙️ 强制性开发规范
-
-### 1. 文件位置规范
-
-| 文件类型 | 存放位置 | 示例 |
-|---------|---------|------|
-| 临时测试文件 | `temp/tests/` | test_*.* |
-| 临时报告文件 | `temp/reports/` | *_report.md |
-| 版本发布报告 | `docs/reports/` | v{版本号}_release_report.md |
-| 归档文档 | `docs/archive/v{版本号}/` | PROJECT_STATUS.md 等 |
-| 核心文档 | 项目根目录 | PROJECT_STATUS.md, README.md, CHANGELOG.md, 规范.md |
-| 前端源代码 | `frontend/src/` | *.ts, *.tsx |
-| 后端源代码 | `backend/app/` | *.py |
-| 正式测试 | `tests/` | test_*.* |
-
-### 2. 设计原则（关键）
-
-**绝对禁止量化**：
-- ❌ 不使用 priority, intensity, level, score 等数字
-- ❌ 不使用"每N轮-1"的降级机制
-- ❌ 不使用数字阈值判断删除
-
-**纯定性描述**：
-- ✅ 所有内容都是文本描述
-- ✅ 用 timestamp 记录时间
-- ✅ 用定期维护任务清理数据
-
----
-
-## 🤝 AI 协作指南
-
-> **新会话必读**：如果你是新的 AI 会话，请先阅读本文件（PROJECT_STATUS.md）了解项目状态，然后参考以下指南。
-
-### 文档简称约定
-
-- **PS** = PROJECT_STATUS.md（本文件，项目状态）
-- **规范** = 规范.md（工作规范，执行规范化操作时读取）
-- **README** = README.md（项目入口文档）
-
-### 文档查阅顺序
-
-1. **首次了解项目** → PROJECT_STATUS.md（本文件）
-2. **了解架构设计** → docs/DESIGN_OVERVIEW.md (v0.5.0)
-3. **执行规范操作** → 规范.md（归档、重构、版本发布等）
-4. **了解详细设计** → docs/design/ 目录下的模块文档
-
-### 操作规范
-
-**执行项目管理操作时，参考 `规范.md`**：
-- 归档：`按照规范归档`
-- 重构：`按照规范重构`
-- 版本发布：`按照规范发布`
-- 更新PS：`按照规范更新PS` 或 `更新PS`
-
-### 基本原则
-
-1. **归档文档是历史快照**：`docs/archive/` 不代表最新状态
-2. **设计原则**：纯定性描述，绝对禁止量化
-3. **时间格式**：所有文档时间统一为 `YYYY-MM-DD HH:MM`（24小时制）
 
 ---
 
@@ -432,6 +420,22 @@ REQUIREMENTS.md、DESIGN_OVERVIEW.md、SYSTEM_FLOW.md 三个文档存在大量�
 
 ---
 
-**文档版本**: v0.3.8
+## ⚙️ 设计原则（强制性规范）
+
+### 绝对禁止量化
+
+- ❌ 不使用 priority, intensity, level, score 等数字
+- ❌ 不使用"每N轮-1"的降级机制
+- ❌ 不使用数字阈值判断删除
+
+### 纯定性描述
+
+- ✅ 所有内容都是文本描述
+- ✅ 用 timestamp 记录时间
+- ✅ 用定期维护任务清理数据
+
+---
+
+**文档版本**: v0.4.0
 **创建日期**: 2025-10-13 10:00
-**最后更新**: 2025-10-16 22:10
+**最后更新**: 2025-10-16 23:15
